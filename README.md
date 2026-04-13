@@ -1,36 +1,313 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Geo Monitor — Project Blueprint
 
-## Getting Started
+## Goal
 
-First, run the development server:
+Build a **serverless geospatial intelligence dashboard** that aggregates real-time global events and converts them into meaningful insights.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+---
+
+# Tech Stack
+
+## Frontend
+
+* Next.js (App Router)
+* React
+* Tailwind CSS
+* Map:
+
+  * 2D: Leaflet + react-leaflet
+  * 3D (optional): react-globe.gl
+
+## Backend (Serverless)
+
+* Next.js API routes
+* Edge functions (optional)
+
+## Caching
+
+* Primary: Vercel Edge Cache
+* Optional: Upstash Redis (free tier)
+
+## Data Sources
+
+* USGS (earthquakes)
+* NASA FIRMS (fires)
+* Cloudflare Radar (cyber trends)
+* Submarine Cable Map (static dataset)
+
+---
+
+# Folder Structure
+
+```
+/app
+  /api
+    /earthquakes/route.ts
+    /fires/route.ts
+    /cyber/route.ts
+    /events/route.ts
+
+  /components
+    Map.tsx
+    EventCard.tsx
+    Filters.tsx
+
+  /lib
+    fetchers.ts
+    normalizers.ts
+    ruleEngine.ts
+    cache.ts
+
+  /types
+    event.ts
+
+  /hooks
+    useEvents.ts
+
+  page.tsx
+
+/public
+  cables.json
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+---
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+# Event Schema (CRITICAL)
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Unified Event Schema
 
-## Learn More
+```ts
+export type GeoEvent = {
+  id: string
+  type: "earthquake" | "fire" | "cyber"
+  source: string
 
-To learn more about Next.js, take a look at the following resources:
+  location: {
+    lat: number
+    lng: number
+    region?: string
+    country?: string
+  }
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+  timestamp: number
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+  severity: number // 1–10
 
-## Deploy on Vercel
+  metadata: Record<string, any>
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+  insight: string
+}
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+---
+
+# Data Pipeline
+
+```
+External APIs → Fetchers → Normalizers → Rule Engine → Cache → API Route → Frontend
+```
+
+---
+
+# API Integration Tasks
+
+## 1. USGS (Earthquakes)
+
+* Endpoint: GeoJSON feed
+* Extract:
+
+  * magnitude
+  * coordinates
+  * depth
+
+### Task
+
+* [ ] Create fetcher
+* [ ] Normalize to GeoEvent
+* [ ] Add severity logic
+
+---
+
+## 2. NASA FIRMS (Fires)
+
+* Extract:
+
+  * brightness
+  * coordinates
+
+### Task
+
+* [ ] Fetch data
+* [ ] Normalize
+* [ ] Map intensity → severity
+
+---
+
+## 3. Cloudflare Radar (Cyber)
+
+* Use summaries/trends only
+
+### Task
+
+* [ ] Fetch trend data
+* [ ] Convert to regional events
+
+---
+
+## 4. Submarine Cables
+
+* Static JSON dataset
+
+### Task
+
+* [ ] Add to public/
+* [ ] Render on map
+
+---
+
+# Rule Engine
+
+## Goal
+
+Convert structured data into human-readable insights.
+
+### Example Logic
+
+```ts
+if (event.type === "earthquake") {
+  if (event.metadata.magnitude > 7)
+    return "High magnitude earthquake detected"
+}
+```
+
+---
+
+# Map Rendering Strategy
+
+## 2D Map (Leaflet)
+
+### Techniques
+
+* Marker clustering
+* Lazy rendering
+* Debounce updates
+
+### Tasks
+
+* [ ] Setup map
+* [ ] Add markers
+* [ ] Add clustering
+* [ ] Add filters
+
+---
+
+## 3D Globe (Optional)
+
+### Library
+
+* react-globe.gl
+
+### Tips
+
+* Limit number of points
+* Use arcs/points selectively
+
+---
+
+# Performance Rules
+
+* DO NOT render 1000+ markers directly
+* Use clustering
+* Cache API responses (5–10 min)
+* Avoid frequent re-renders
+
+---
+
+# AI / Summarization Strategy
+
+## Recommended Approach
+
+Hybrid:
+
+```
+Rules → Structured Insight → Optional AI polish
+```
+
+## Free Options
+
+* HuggingFace inference API
+* Small 1B–3B models
+
+## Rule
+
+* AI only for final sentence polishing
+* NOT for logic
+
+---
+
+# API Routes Plan
+
+## /api/events
+
+* Aggregates all sources
+* Returns unified data
+
+### Tasks
+
+* [ ] Combine all fetchers
+* [ ] Apply rule engine
+* [ ] Return final events
+
+---
+
+# Execution Timeline
+
+## Week 1
+
+* [ ] Setup project
+* [ ] USGS integration
+* [ ] Basic map
+
+## Week 2
+
+* [ ] NASA FIRMS
+* [ ] Event schema
+* [ ] Rule engine
+
+## Week 3
+
+* [ ] Cyber data
+* [ ] UI polish
+* [ ] Filters
+
+## Final Days
+
+* [ ] Caching
+* [ ] Deployment
+* [ ] Cleanup
+
+---
+
+# Constraints (DO NOT BREAK)
+
+* No database
+* No heavy scraping
+* No unnecessary domains (finance, etc.)
+* Serverless only
+
+---
+
+# Final Output
+
+A deployed application that:
+
+* Displays global events on a map
+* Provides structured insights
+* Uses multiple real-world data sources
+* Runs fully serverless
+
+---
+
+# Positioning
+
+"Built a serverless geospatial intelligence platform aggregating real-time global event data with custom signal processing and visualization."
