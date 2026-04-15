@@ -1,8 +1,8 @@
-# Geo Monitor — Project Blueprint
+# Cyber Geo Monitor — Project Blueprint
 
 ## Goal
 
-Build a **serverless geospatial intelligence dashboard** that aggregates real-time global events and converts them into meaningful insights.
+Build a **Cyber Geo Monitor: Global Network Anomaly & Threat Intelligence Dashboard** that aggregates real-time network traffic and converts them into meaningful insights.
 
 ---
 
@@ -42,10 +42,7 @@ Build a **serverless geospatial intelligence dashboard** that aggregates real-ti
 ```
 /app
   /api
-    /earthquakes/route.ts
-    /fires/route.ts
     /cyber/route.ts
-    /events/route.ts
 
   /components
     Map.tsx
@@ -79,7 +76,7 @@ Build a **serverless geospatial intelligence dashboard** that aggregates real-ti
 ```ts
 export type GeoEvent = {
   id: string
-  type: "earthquake" | "fire" | "cyber"
+  type: "cyber"
   source: string
 
   location: {
@@ -111,39 +108,7 @@ External APIs → Fetchers → Normalizers → Rule Engine → Cache → API Rou
 
 # API Integration Tasks
 
-## 1. USGS (Earthquakes)
-
-* Endpoint: GeoJSON feed
-* Extract:
-
-  * magnitude
-  * coordinates
-  * depth
-
-### Task
-
-* [ ] Create fetcher
-* [ ] Normalize to GeoEvent
-* [ ] Add severity logic
-
----
-
-## 2. NASA FIRMS (Fires)
-
-* Extract:
-
-  * brightness
-  * coordinates
-
-### Task
-
-* [ ] Fetch data
-* [ ] Normalize
-* [ ] Map intensity → severity
-
----
-
-## 3. Cloudflare Radar (Cyber)
+## 1. Cloudflare Radar (Cyber)
 
 * Use summaries/trends only
 
@@ -151,19 +116,6 @@ External APIs → Fetchers → Normalizers → Rule Engine → Cache → API Rou
 
 * [ ] Fetch trend data
 * [ ] Convert to regional events
-
----
-
-## 4. Submarine Cables
-
-* Static JSON dataset
-
-### Task
-
-* [ ] Add to public/
-* [ ] Render on map
-
----
 
 # Rule Engine
 
