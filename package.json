@@ -9,7 +9,9 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@icons-pack/react-simple-icons": "^13.13.0",
     "@upstash/redis": "^1.37.0",
+    "clsx": "^2.1.1",
     "countries-and-timezones": "^3.9.0",
     "dotenv": "^17.4.2",
     "groq-sdk": "^1.1.2",
@@ -20,6 +22,8 @@
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "react-globe.gl": "^2.37.1",
+    "simple-icons": "^16.18.1",
+    "tailwind-merge": "^3.5.0",
     "three": "^0.183.2",
     "three-globe": "^2.45.2",
     "zustand": "^5.0.12"
