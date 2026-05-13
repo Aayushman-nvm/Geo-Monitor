@@ -31,7 +31,9 @@ export default function ThreatModal({ threat, onClose }: ThreatModalProps) {
         body: JSON.stringify({ ip: threat?.ip }),
       });
       const data = await res.json();
-      setASNDetails(data);
+      // api returns { success, data: { ip, geo, asn }, ... }
+      const asnObj = data?.data?.asn ?? data?.data?.geo?.asnDetails ?? null;
+      setASNDetails(asnObj);
     } catch (error) {
       console.error("Failed to fetch ASN details:", error);
     } finally {
