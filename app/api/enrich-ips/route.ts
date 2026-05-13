@@ -3,6 +3,7 @@
 import { NextResponse } from "next/server";
 import { getBlacklist } from "@/services/abuseipdb";
 import { geolocateBatch } from "@/services/geolocateIP";
+import { getIpAsn } from '@/services/cloudflare';
 import { redis } from "@/lib/redis";
 import type { BlacklistItem } from "@/types/redis";
 
@@ -127,6 +128,60 @@ export async function POST(request: Request) {
       await Promise.all(cachePromises);
 
       geoData.push(...freshGeoData);
+    }
+
+    // ============================================
+    // ASN enrichment (use a single Redis HASH to avoid many top-level keys)
+    // Key: 'asn:ips'  Field: ip -> JSON string of ASN result
+    // ============================================
+    const asnHashKey = 'asn:ips';
+    const lookupIPs: string[] = [];
+    const geoByIp = new Map<string, any>();
+
+    for (const g of geoData) geoByIp.set(g.ip, g);
+
+    // Check existing ASN in geo data or in redis hash
+    for (const geo of geoData) {
+      // If geo.as already contains an AS string (e.g. "AS13335 ...") skip
+      if (geo.as && /AS\d+/.test(String(geo.as))) continue;
+
+      try {
+        const cached = await redis.hget(asnHashKey, geo.ip);
+        if (cached) {
+          const asnInfo = JSON.parse(cached as string);
+          geo.as = `AS${asnInfo.asn} ${asnInfo.orgName || asnInfo.name || ''}`.trim();
+          geo.asnDetails = asnInfo;
+          // Update geo cache with merged ASN info
+          await redis.set(`geo:ip:${geo.ip}`, JSON.stringify(geo), { ex: 604800 });
+        } else {
+          lookupIPs.push(geo.ip);
+        }
+      } catch (err) {
+        // On any redis/parse error, enqueue for lookup so we don't lose enrichment
+        lookupIPs.push(geo.ip);
+      }
+    }
+
+    // Perform ASN lookups sequentially to avoid rate limits (cron is not latency sensitive)
+    for (const ip of lookupIPs) {
+      try {
+        const asnRes = await getIpAsn(ip);
+        const asnInfo = asnRes?.result?.asn || null;
+        if (asnInfo) {
+          // Cache in single redis hash
+          await redis.hset(asnHashKey, { [ip]: JSON.stringify(asnInfo) });
+
+          // Merge into geo entry and update geo cache
+          const geo = geoByIp.get(ip);
+          if (geo) {
+            geo.as = `AS${asnInfo.asn} ${asnInfo.orgName || asnInfo.name || ''}`.trim();
+            geo.asnDetails = asnInfo;
+            await redis.set(`geo:ip:${ip}`, JSON.stringify(geo), { ex: 604800 });
+          }
+        }
+      } catch (err) {
+        console.error('[ENRICH-IPS] ASN lookup failed for', ip, err);
+      }
     }
 
     console.log(`[ENRICH-IPS] Total geolocated IPs: ${geoData.length}`);
