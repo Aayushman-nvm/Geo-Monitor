@@ -11,79 +11,132 @@ import ThreatListModal from '@/components/threat/ThreatListModal';
 import FlowDetailsModal from '@/components/threat/FlowDetailsModal';
 import GeoJSON from '@/data/custom.geo.json';
 
-interface GlobeComponentProps {
-  width?: number;
-  height?: number;
+interface Globe3DProps {
+  filteredThreats?: RedisThreat[];
+  selectedLevel?: 'all' | 'critical' | 'high' | 'medium';
 }
 
 const Globe = dynamic(() => import('react-globe.gl'), {
   ssr: false,
-  loading: () => <div className="text-white">Loading globe...</div>,
+  loading: () => (
+    <div className="flex items-center justify-center h-full">
+      <div className="text-gray-500 text-sm">Loading globe...</div>
+    </div>
+  ),
 });
 
-export default function Globe3D({ width = 1200, height = 800 }: GlobeComponentProps) {
+export default function Globe3D({ 
+  filteredThreats,
+  selectedLevel = 'all' 
+}: Globe3DProps) {
   const globeRef = useRef<any>(null);
-  const { threats, hotspots, attackFlow, stats } = useThreatStore();
+  const { threats, hotspots, attackFlow } = useThreatStore();
+  
+  // Use filtered threats if provided, otherwise use all threats from store
+  const displayThreats = filteredThreats || threats || [];
   
   // Modal state
   const [selectedThreat, setSelectedThreat] = useState<RedisThreat | null>(null);
   const [selectedCountry, setSelectedCountry] = useState<string | null>(null);
   const [selectedFlow, setSelectedFlow] = useState<AttackFlow | null>(null);
   
-  // GeoJSON data
   const countries = GeoJSON;
   const flows = attackFlow || [];
 
+  // Measure container to pass explicit size to the Globe so it always centers and fits.
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [containerSize, setContainerSize] = useState({ width: 800, height: 600 });
+
+  useEffect(() => {
+    const updateSize = () => {
+      const el = containerRef.current;
+      if (el) {
+        const rect = el.getBoundingClientRect();
+        setContainerSize({ width: Math.max(100, Math.floor(rect.width)), height: Math.max(100, Math.floor(rect.height)) });
+      }
+    };
+
+    updateSize();
+    window.addEventListener('resize', updateSize);
+    return () => window.removeEventListener('resize', updateSize);
+  }, []);
+
   // Auto-rotate globe
   useEffect(() => {
-    if (globeRef.current) {
-      globeRef.current.controls().autoRotate = true;
-      globeRef.current.controls().autoRotateSpeed = 0.5;
+    if (globeRef.current && globeRef.current.controls) {
+      try {
+        const controls = globeRef.current.controls();
+        controls.autoRotate = true;
+        controls.autoRotateSpeed = 0.3;
+        controls.enableZoom = true;
+        controls.minDistance = 120;
+        controls.maxDistance = 800;
+      } catch (err) {
+        // fallback: ignore
+      }
     }
   }, []);
 
-  // ============================================
-  // Color Utilities
-  // ============================================
-  
+  // Point to camera on initial load and when displayThreats update
+  useEffect(() => {
+    if (!globeRef.current) return;
+
+    // Determine a centered view. Use average of threats if available, otherwise fallback to 0,0.
+    const lat = displayThreats.length > 0
+      ? displayThreats.reduce((s, t) => s + (t.lat || 0), 0) / displayThreats.length
+      : 0;
+    const lng = displayThreats.length > 0
+      ? displayThreats.reduce((s, t) => s + (t.lon || 0), 0) / displayThreats.length
+      : 0;
+
+    // Choose altitude based on container size to ensure full globe visibility on different screens.
+    const smallestSide = Math.min(containerSize.width, containerSize.height);
+    // Larger altitude for smaller viewport to fit globe fully
+    const altitude = smallestSide < 420 ? 2.8 : smallestSide < 600 ? 2.4 : 2.0;
+
+    try {
+      globeRef.current.pointOfView({ lat: lat || 0, lng: lng || 0, altitude }, 1000);
+    } catch (err) {
+      // ignore if globe not ready yet
+    }
+  }, [displayThreats.length, containerSize.width, containerSize.height]);
+
+  // Color utilities
   const getThreatColor = (threat: RedisThreat): string => {
     const score = threat.threatScore;
-    if (score >= 85) return '#ff0000'; // Critical - Red
-    if (score >= 70) return '#ff6b00'; // High - Orange
-    if (score >= 50) return '#ffa500'; // Medium - Light Orange
-    return '#ffff00'; // Low - Yellow
+    if (score >= 85) return '#ef4444';
+    if (score >= 70) return '#f97316';
+    if (score >= 50) return '#f59e0b';
+    return '#eab308';
   };
 
   const getThreatSize = (threat: RedisThreat): number => {
     const score = threat.threatScore;
-    if (score >= 85) return 1.5;
-    if (score >= 70) return 1.2;
-    if (score >= 50) return 1.0;
-    return 0.8;
+    if (score >= 85) return 0.8;
+    if (score >= 70) return 0.6;
+    if (score >= 50) return 0.5;
+    return 0.4;
   };
 
   const getCountryColor = (countryCode: string): string => {
-    const hotspot = hotspots.find(h => h.countryCode === countryCode);
-    if (!hotspot) return 'rgba(100, 100, 100, 0.3)';
+    const hotspot = hotspots?.find(h => h.countryCode === countryCode);
+    if (!hotspot) return 'rgba(60, 60, 60, 0.2)';
     
     const density = hotspot.threatDensity;
-    if (density >= 80) return 'rgba(255, 0, 0, 0.5)';
-    if (density >= 60) return 'rgba(255, 107, 0, 0.4)';
-    if (density >= 40) return 'rgba(255, 165, 0, 0.3)';
-    return 'rgba(255, 255, 0, 0.2)';
+    if (density >= 80) return 'rgba(239, 68, 68, 0.3)';
+    if (density >= 60) return 'rgba(249, 115, 22, 0.25)';
+    if (density >= 40) return 'rgba(245, 158, 11, 0.2)';
+    return 'rgba(234, 179, 8, 0.15)';
   };
 
   const getFlowColor = (flow: AttackFlow): string => {
     const magnitude = flow.magnitude;
-    if (magnitude >= 10) return 'rgba(255, 0, 0, 0.8)';
-    if (magnitude >= 5) return 'rgba(255, 107, 0, 0.7)';
-    return 'rgba(255, 165, 0, 0.6)';
+    if (magnitude >= 10) return 'rgba(239, 68, 68, 0.7)';
+    if (magnitude >= 5) return 'rgba(249, 115, 22, 0.6)';
+    return 'rgba(245, 158, 11, 0.5)';
   };
 
-  // ============================================
-  // Click Handlers
-  // ============================================
-
+  // Click handlers
   const handleThreatClick = useCallback((threat: RedisThreat) => {
     setSelectedThreat(threat);
     setSelectedCountry(null);
@@ -105,230 +158,150 @@ export default function Globe3D({ width = 1200, height = 800 }: GlobeComponentPr
     setSelectedCountry(null);
   }, []);
 
-  // ============================================
-  // Data Preparation
-  // ============================================
-
-  // Prepare point data for threats (beacons)
-  const threatPoints = threats.map(threat => ({
+  // Data preparation
+  const threatPoints = displayThreats.map(threat => ({
     lat: threat.lat,
     lng: threat.lon,
     size: getThreatSize(threat),
     color: getThreatColor(threat),
-    threat, // Store full threat object for click handling
+    threat,
   }));
 
-  // Prepare arc data for attack flows (trails)
   const arcData = flows.map(flow => ({
     startLat: flow.originCoords?.lat,
     startLng: flow.originCoords?.lon,
     endLat: flow.targetCoords?.lat,
     endLng: flow.targetCoords?.lon,
     color: getFlowColor(flow),
-    flow, // Store full flow object
+    flow,
   }));
 
-  // Get threats for selected country
   const countryThreats = selectedCountry
-    ? threats.filter(t => t.countryCode === selectedCountry)
+    ? threats?.filter(t => t.countryCode === selectedCountry) || []
     : [];
 
   return (
-    <div className="relative">
+    <div ref={containerRef} className="relative w-full h-full flex items-center justify-center">
       <Globe
         ref={globeRef}
-        width={width}
-        height={height}
-        backgroundColor="#000011"
+        width={containerSize.width}
+        height={containerSize.height}
+        backgroundColor="rgba(0, 0, 0, 0)"
         
-        // ============================================
-        // Globe Appearance
-        // ============================================
+        // Globe appearance
         globeImageUrl="//unpkg.com/three-globe/example/img/earth-night.jpg"
         backgroundImageUrl="//unpkg.com/three-globe/example/img/night-sky.png"
         
-        // ============================================
-        // Countries (Polygons)
-        // ============================================
+        // Countries
         polygonsData={countries?.features || []}
         polygonCapColor={d => getCountryColor((d as any).properties?.iso_a2)}
-        polygonSideColor={() => 'rgba(0, 0, 0, 0.1)'}
-        polygonStrokeColor={() => 'rgba(255, 255, 255, 0.2)'}
-        polygonAltitude={0.01}
+        polygonSideColor={() => 'rgba(0, 0, 0, 0.05)'}
+        polygonStrokeColor={() => 'rgba(100, 100, 100, 0.15)'}
+        polygonAltitude={0.006}
         polygonsTransitionDuration={300}
         onPolygonClick={handleCountryClick}
         polygonLabel={(d) => {
           const props = (d as any).properties;
           const countryCode = props?.iso_a2;
-          const hotspot = hotspots.find(h => h.countryCode === countryCode);
+          const hotspot = hotspots?.find(h => h.countryCode === countryCode);
           
           if (hotspot) {
             return `
-              <div style="background: rgba(0,0,0,0.9); padding: 12px; border-radius: 8px; color: white;">
-                <strong style="font-size: 16px;">${hotspot.countryName}</strong><br/>
-                <span style="color: #ff6b00;">Threats: ${hotspot.threatCount}</span><br/>
-                <span style="color: #ffa500;">Avg Score: ${hotspot.avgThreatScore}/100</span><br/>
-                <span style="color: #888; font-size: 12px;">Click for details</span>
+              <div style="background: rgba(0,0,0,0.95); padding: 10px 12px; border-radius: 6px; color: white; font-size: 12px; line-height: 1.5;">
+                <strong style="font-size: 13px; display: block; margin-bottom: 4px;">${hotspot.countryName}</strong>
+                <div style="color: #f97316;">Threats: ${hotspot.threatCount}</div>
+                <div style="color: #f59e0b;">Avg Score: ${hotspot.avgThreatScore}/100</div>
+                <div style="color: #888; font-size: 10px; margin-top: 4px;">Click for details</div>
               </div>
             `;
           }
-          return `<div style="padding: 8px; background: rgba(0,0,0,0.8); color: white;">${props?.name || 'Unknown'}</div>`;
+          return `<div style="padding: 6px 10px; background: rgba(0,0,0,0.85); color: white; font-size: 11px; border-radius: 4px;">${props?.name || 'Unknown'}</div>`;
         }}
         
-        // ============================================
-        // Threat Beacons (Points)
-        // ============================================
+        // Threat beacons
         pointsData={threatPoints}
         pointLat="lat"
         pointLng="lng"
         pointColor="color"
-        pointAltitude={0.05}
+        pointAltitude={0.02}
         pointRadius="size"
         pointsMerge={false}
         onPointClick={(point: any) => handleThreatClick(point.threat)}
         pointLabel={(point: any) => {
           const threat = point.threat;
           return `
-            <div style="background: rgba(0,0,0,0.95); padding: 12px; border-radius: 8px; color: white; max-width: 280px;">
-              <strong style="color: ${getThreatColor(threat)}; font-size: 14px;">
+            <div style="background: rgba(0,0,0,0.95); padding: 10px 12px; border-radius: 6px; color: white; max-width: 260px; font-size: 11px; line-height: 1.5;">
+              <strong style="color: ${getThreatColor(threat)}; font-size: 12px; display: block; margin-bottom: 6px;">
                 Threat Score: ${threat.threatScore}/100
-              </strong><br/>
-              <div style="margin-top: 8px; font-size: 13px;">
-                <strong>IP:</strong> ${threat.ip}<br/>
-                <strong>Location:</strong> ${threat.city}, ${threat.country}<br/>
-                <strong>ASN:</strong> AS${threat.asn} - ${threat.asnName}<br/>
-                ${threat.bgpHijack ? '<span style="color: #ff0000;">⚠️ BGP Hijack Detected</span><br/>' : ''}
-                <span style="color: #888; font-size: 11px; margin-top: 4px; display: block;">Click for full details</span>
+              </strong>
+              <div style="font-size: 11px;">
+                <div><strong>IP:</strong> ${threat.ip}</div>
+                <div><strong>Location:</strong> ${threat.city}, ${threat.country}</div>
+                <div><strong>ASN:</strong> AS${threat.asn}</div>
+                ${threat.bgpHijack ? '<div style="color: #ef4444; margin-top: 4px;">⚠️ BGP Hijack</div>' : ''}
+                <div style="color: #888; font-size: 10px; margin-top: 6px;">Click for full details</div>
               </div>
             </div>
           `;
         }}
         
-        // ============================================
-        // Attack Flow Trails (Arcs)
-        // ============================================
+        // Attack flows
         arcsData={arcData}
         arcStartLat="startLat"
         arcStartLng="startLng"
         arcEndLat="endLat"
         arcEndLng="endLng"
         arcColor="color"
-        arcAltitude={0.3}
-        arcStroke={0.5}
-        arcDashLength={0.4}
-        arcDashGap={0.2}
-        arcDashAnimateTime={2000}
+        arcAltitude={0.25}
+        arcStroke={0.4}
+        arcDashLength={0.6}
+        arcDashGap={0.3}
+        arcDashAnimateTime={1500}
         arcsTransitionDuration={1000}
         onArcClick={(arc: any) => handleFlowClick(arc.flow)}
         arcLabel={(arc: any) => {
           const flow = arc.flow;
           return `
-            <div style="background: rgba(0,0,0,0.95); padding: 12px; border-radius: 8px; color: white;">
-              <strong style="font-size: 14px;">Attack Flow</strong><br/>
-              <div style="margin-top: 8px; font-size: 13px;">
-                <span style="color: #ff6b00;">From:</span> ${flow.originCountry}<br/>
-                <span style="color: #ffa500;">To:</span> ${flow.targetCountry}<br/>
-                <span style="color: #fff;">Volume:</span> ${flow.magnitude.toFixed(2)}%<br/>
-                <span style="color: #888; font-size: 11px; margin-top: 4px; display: block;">Click for details</span>
+            <div style="background: rgba(0,0,0,0.95); padding: 10px 12px; border-radius: 6px; color: white; font-size: 11px; line-height: 1.5;">
+              <strong style="font-size: 12px; display: block; margin-bottom: 6px;">Attack Flow</strong>
+              <div>
+                <div style="color: #f97316;"><strong>From:</strong> ${flow.originCountry}</div>
+                <div style="color: #f59e0b;"><strong>To:</strong> ${flow.targetCountry}</div>
+                <div><strong>Volume:</strong> ${flow.magnitude.toFixed(2)}%</div>
+                <div style="color: #888; font-size: 10px; margin-top: 6px;">Click for details</div>
               </div>
             </div>
           `;
         }}
         
-        // ============================================
-        // Pulsing Rings (High Severity)
-        // ============================================
-        ringsData={threats
-          .filter(t => t.threatScore >= 85) // Only critical threats
-          .map(t => ({
-            lat: t.lat,
-            lng: t.lon,
-          }))
+        // Pulsing rings for critical threats
+        ringsData={displayThreats
+          .filter(t => t.threatScore >= 85)
+          .map(t => ({ lat: t.lat, lng: t.lon }))
         }
-        ringColor={() => 'rgba(255, 0, 0, 0.5)'}
-        ringMaxRadius={5}
-        ringPropagationSpeed={2}
-        ringRepeatPeriod={1500}
+        ringColor={() => 'rgba(239, 68, 68, 0.4)'}
+        ringMaxRadius={3}
+        ringPropagationSpeed={1.5}
+        ringRepeatPeriod={2000}
       />
 
-      {/* Modals */}
-      {selectedThreat && (
-        <ThreatModal
-          threat={selectedThreat}
-          onClose={() => setSelectedThreat(null)}
-        />
-      )}
+      {/* Popups instead of modals */}
+      <ThreatModal
+        threat={selectedThreat}
+        onClose={() => setSelectedThreat(null)}
+      />
 
-      {selectedCountry && (
-        <ThreatListModal
-          countryCode={selectedCountry}
-          threats={countryThreats}
-          onThreatClick={handleThreatClick}
-          onClose={() => setSelectedCountry(null)}
-        />
-      )}
+      <ThreatListModal
+        countryCode={selectedCountry}
+        threats={countryThreats}
+        onThreatClick={handleThreatClick}
+        onClose={() => setSelectedCountry(null)}
+      />
 
-      {selectedFlow && (
-        <FlowDetailsModal
-          flow={selectedFlow}
-          onClose={() => setSelectedFlow(null)}
-        />
-      )}
-
-      {/* Stats Overlay */}
-      {stats && (
-        <div className="absolute top-4 left-4 bg-black/80 text-white p-4 rounded-lg backdrop-blur-sm">
-          <h3 className="text-lg font-bold mb-2">Global Threat Overview</h3>
-          <div className="space-y-1 text-sm">
-            <div className="flex justify-between gap-4">
-              <span className="text-gray-400">Total Threats:</span>
-              <span className="font-semibold">{stats.totalThreats}</span>
-            </div>
-            <div className="flex justify-between gap-4">
-              <span className="text-gray-400">High Severity:</span>
-              <span className="font-semibold text-red-500">{stats.highSeverityCount}</span>
-            </div>
-            <div className="flex justify-between gap-4">
-              <span className="text-gray-400">BGP Hijacks:</span>
-              <span className="font-semibold text-orange-500">{stats.bgpHijackCount}</span>
-            </div>
-            <div className="flex justify-between gap-4">
-              <span className="text-gray-400">Active Countries:</span>
-              <span className="font-semibold">{stats.activeCountries}</span>
-            </div>
-            <div className="flex justify-between gap-4">
-              <span className="text-gray-400">Network Outages:</span>
-              <span className="font-semibold text-yellow-500">{stats.outageCount}</span>
-            </div>
-          </div>
-          <div className="mt-3 pt-3 border-t border-gray-700 text-xs text-gray-500">
-            Last updated: {new Date(stats.lastUpdated).toLocaleTimeString()}
-          </div>
-        </div>
-      )}
-
-      {/* Legend */}
-      <div className="absolute bottom-4 right-4 bg-black/80 text-white p-4 rounded-lg backdrop-blur-sm">
-        <h4 className="text-sm font-bold mb-2">Threat Levels</h4>
-        <div className="space-y-1 text-xs">
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-red-500"></div>
-            <span>Critical (85+)</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-orange-500"></div>
-            <span>High (70-84)</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full" style={{ backgroundColor: '#ffa500' }}></div>
-            <span>Medium (50-69)</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
-            <span>Low (&lt;50)</span>
-          </div>
-        </div>
-      </div>
+      <FlowDetailsModal
+        flow={selectedFlow}
+        onClose={() => setSelectedFlow(null)}
+      />
     </div>
   );
 }
