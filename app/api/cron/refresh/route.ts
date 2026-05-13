@@ -1,20 +1,11 @@
 // app/api/cron/refresh/route.ts
 
 import { NextResponse } from "next/server";
-import { getTraffic, getAnomalies } from "@/services/cloudflare";
-import { getBlacklist } from "@/services/abuseipdb";
-import { geolocateBatch } from "@/services/geolocateIP";
-import { calculateThreatScore } from "@/lib/scoring/calculateScore";
-import { redis } from "@/lib/redis";
 import type {
   RedisThreat,
   RedisHotspot,
   RedisStats,
-  AttackFlow,
-  RawAttack,
-  BlacklistItem,
 } from "@/types/redis";
-import centroidsArray from "@/data/country-centroid.json";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -29,221 +20,80 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+    const cronSecret = process.env.CRON_SECRET;
+    const headers = {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${cronSecret}`,
+    };
+
     // ============================================
     // STEP 1: Fetch Cloudflare Data
     // ============================================
-    console.log("[CRON] Fetching Cloudflare data...");
+    console.log("[CRON] Step 1: Fetching Cloudflare data...");
 
-    const [trafficData, anomalyData] = await Promise.all([
-      getTraffic(),
-      getAnomalies(),
-    ]);
+    const trafficResponse = await fetch(`${baseUrl}/api/fetch-traffic`, {
+      method: "GET",
+      headers,
+    });
 
-    // Cache raw responses for debugging
-    await Promise.all([
-      redis.set(
-        "cloudflare:attacks:raw",
-        JSON.stringify(trafficData?.topAttacks),
-        { ex: 86400 },
-      ),
-      redis.set(
-        "cloudflare:hijacks:raw",
-        JSON.stringify(anomalyData?.bgpHijacks),
-        { ex: 86400 },
-      ),
-      redis.set(
-        "cloudflare:outages:raw",
-        JSON.stringify(anomalyData?.outages),
-        { ex: 86400 },
-      ),
-    ]);
-
-    // ============================================
-    // STEP 2: Extract IPs from BGP Hijacks
-    // ============================================
-    console.log("[CRON] Extracting IPs from BGP hijacks...");
-
-    const hijackIPs: Array<{
-      ip: string;
-      hijack: any;
-    }> = [];
-
-    // Process BGP hijack events
-    const hijackEvents = anomalyData?.bgpHijacks.result?.events || [];
-
-    for (const event of hijackEvents) {
-      // Only process high-confidence hijacks
-      if (event.confidence_score < 4) continue;
-
-      // Extract first IP from each prefix
-      for (const prefix of event.prefixes) {
-        const ip = getFirstIPFromCIDR(prefix);
-        if (ip) {
-          hijackIPs.push({ ip, hijack: event });
-        }
-      }
-
-      // Limit to avoid quota exhaustion (max 20 IPs per hijack event)
-      if (hijackIPs.length >= 20) break;
+    if (!trafficResponse.ok) {
+      throw new Error("Failed to fetch traffic data");
     }
 
-    console.log(`[CRON] Extracted ${hijackIPs.length} IPs from BGP hijacks`);
+    const trafficResult = await trafficResponse.json();
+    const { traffic: trafficData, anomalies: anomalyData } = trafficResult.data;
 
     // ============================================
-    // STEP 3: Get AbuseIPDB Blacklist
+    // STEP 2: Enrich IPs
     // ============================================
-    console.log("[CRON] Fetching AbuseIPDB blacklist...");
+    console.log("[CRON] Step 2: Enriching IPs...");
 
-    const blacklist = await getBlacklist({ min: 75, limit: 500 }); // Top 500 with 75+ confidence
+    const enrichResponse = await fetch(`${baseUrl}/api/enrich-ips`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        bgpHijacks: anomalyData?.bgpHijacks,
+        includeBlacklist: true,
+      }),
+    });
 
-    // Cache blacklist
-    await redis.set("abuseipdb:blacklist", JSON.stringify(blacklist), {
-      ex: 86400,
-    }); // 6 hours
+    if (!enrichResponse.ok) {
+      throw new Error("Failed to enrich IPs");
+    }
 
-    console.log(`[CRON] Got ${blacklist.data.length} blacklisted IPs`);
-
-    // ============================================
-    // STEP 4: Combine IP Lists
-    // ============================================
-    const allIPs = [
-      ...hijackIPs.map((h) => h.ip),
-      ...blacklist.data.slice(0, 100).map((b: BlacklistItem) => b.ipAddress), // Limit blacklist to 100
-    ];
-
-    // Deduplicate
-    const uniqueIPs = Array.from(new Set(allIPs));
-
-    console.log(`[CRON] Total unique IPs to process: ${uniqueIPs.length}`);
+    const enrichResult = await enrichResponse.json();
+    const { hijackIPs, blacklist, geoData, uniqueIPs } = enrichResult.data;
 
     // ============================================
-    // STEP 5: Geolocate All IPs
+    // STEP 3: Score Threats
     // ============================================
-    console.log("[CRON] Geolocating IPs...");
+    console.log("[CRON] Step 3: Scoring threats...");
 
-    const geoData = await geolocateBatch(uniqueIPs, 1400); // 43 requests/min
-
-    console.log(`[CRON] Geolocated ${geoData.length} IPs`);
-
-    // ============================================
-    // STEP 6: Build Country Hotness Map
-    // ============================================
-    const countryHotness = buildCountryHotness(
-      trafficData?.topOrigins.result.top_0,
-    );
-
-    // ============================================
-    // STEP 7: Process & Score Threats
-    // ============================================
-    console.log("[CRON] Scoring threats...");
-
-    const threats: RedisThreat[] = [];
-
-    for (let i = 0; i < geoData.length; i++) {
-      const geo = geoData[i];
-      const ip = uniqueIPs[i];
-
-      const hijackSource = hijackIPs.find((h) => h.ip === ip);
-      const abuseEntry = blacklist.data.find(
-        (b: BlacklistItem) => b.ipAddress === ip,
-      );
-
-      const asn = extractASN(geo.as);
-      if (!asn) continue;
-
-      // Get country hotness
-      const countryHotnessScore = countryHotness.get(geo.countryCode) || 0;
-
-      // Calculate threat score with proper attack magnitude
-      const threatScore = calculateThreatScore({
-        abuseConfidence: abuseEntry?.abuseConfidenceScore || 0,
-        totalReports: abuseEntry?.totalReports,
-        lastReportedAt: abuseEntry?.lastReportedAt,
-
-        bgpHijack: hijackSource
-          ? {
-              confidenceScore: hijackSource.hijack.confidence_score,
-              duration: hijackSource.hijack.duration,
-            }
-          : undefined,
-
-        countryCode: geo.countryCode,
+    const scoreResponse = await fetch(`${baseUrl}/api/score`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        geoData,
+        uniqueIPs,
+        hijackIPs,
+        blacklist,
+        topOrigins: trafficData?.topOrigins.result.top_0,
         topAttacks: trafficData?.topAttacks.result.top_0,
+      }),
+    });
 
-        occurrenceCount: 1, // Will update with historical data later
-        firstSeenHoursAgo: 0,
-
-        countryHotness: countryHotnessScore,
-      });
-
-      // Extract individual components for display
-      const attackMagnitude = hijackSource
-        ? calculateBGPAttackMagnitude(
-            {
-              confidenceScore: hijackSource.hijack.confidence_score,
-              duration: hijackSource.hijack.duration,
-            },
-            geo.countryCode,
-            trafficData?.topAttacks.result.top_0,
-          )
-        : calculateBlacklistAttackMagnitude(
-            {
-              totalReports: abuseEntry?.totalReports || 0,
-              lastReportedAt:
-                abuseEntry?.lastReportedAt || new Date().toISOString(),
-            },
-            geo.countryCode,
-            trafficData?.topAttacks.result.top_0,
-          );
-
-      // Build threat object
-      const threat: RedisThreat = {
-        id: `${ip}_${Date.now()}`,
-        ip,
-        lat: geo.lat,
-        lon: geo.lon,
-        country: geo.country,
-        countryCode: geo.countryCode,
-        city: geo.city,
-        asn,
-        asnName: geo.org,
-        isp: geo.isp,
-
-        threatScore,
-        abuseConfidence: abuseEntry?.abuseConfidenceScore || 0,
-        attackMagnitude,
-        countryHotness: countryHotnessScore,
-
-        isHighThreat: threatScore > 75,
-        isClusteredThreat: threatScore >= 50 && threatScore <= 75,
-
-        dataSource: hijackSource ? "bgp_hijack" : "abuseipdb_blacklist",
-
-        bgpHijack: hijackSource
-          ? {
-              eventId: hijackSource.hijack.id,
-              hijackerASN: hijackSource.hijack.hijacker_asn,
-              victimASN: hijackSource.hijack.victim_asns[0],
-              confidenceScore: hijackSource.hijack.confidence_score,
-              prefixes: hijackSource.hijack.prefixes,
-              duration: hijackSource.hijack.duration,
-            }
-          : undefined,
-
-        firstSeen: abuseEntry?.lastReportedAt || new Date().toISOString(),
-        lastSeen: new Date().toISOString(),
-        occurrences: 1,
-      };
-
-      threats.push(threat);
+    if (!scoreResponse.ok) {
+      throw new Error("Failed to score threats");
     }
 
-    console.log(`[CRON] Generated ${threats.length} threats`);
+    const scoreResult = await scoreResponse.json();
+    const threats: RedisThreat[] = scoreResult.data.threats;
 
     // ============================================
-    // STEP 8: Build Hotspots
+    // STEP 4: Build Hotspots (kept in cron)
     // ============================================
-    console.log("[CRON] Building hotspots...");
+    console.log("[CRON] Step 4: Building hotspots...");
 
     const hotspots = buildHotspots(
       threats,
@@ -252,8 +102,10 @@ export async function GET(request: Request) {
     );
 
     // ============================================
-    // STEP 9: Calculate Stats
+    // STEP 5: Calculate Stats (kept in cron)
     // ============================================
+    console.log("[CRON] Step 5: Calculating stats...");
+
     const stats: RedisStats = {
       totalThreats: threats.length,
       highSeverityCount: threats.filter((t) => t.isHighThreat).length,
@@ -268,52 +120,46 @@ export async function GET(request: Request) {
       lastUpdated: new Date().toISOString(),
     };
 
-    // After STEP 9 (Calculate Stats), add STEP 9.5:
+    // ============================================
+    // STEP 6: Build Attack Flows
+    // ============================================
+    console.log("[CRON] Step 6: Building attack flows...");
+
+    const historyResponse = await fetch(`${baseUrl}/api/history`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        topAttacks: trafficData?.topAttacks.result.top_0,
+        hotspots,
+      }),
+    });
+
+    if (!historyResponse.ok) {
+      throw new Error("Failed to build attack flows");
+    }
+
+    const historyResult = await historyResponse.json();
+    const attackFlows = historyResult.data.attackFlows;
 
     // ============================================
-    // STEP 9.5: Extract Attack Flows for Trails
+    // STEP 7: Cache Everything
     // ============================================
-    console.log("[CRON] Processing attack flows...");
+    console.log("[CRON] Step 7: Caching data...");
 
-    const hotspotMap = Object.fromEntries(
-      hotspots.map((h) => [h.countryCode, h.coords]),
-    );
+    const cacheResponse = await fetch(`${baseUrl}/api/cache`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        threats,
+        hotspots,
+        stats,
+        attackFlows,
+      }),
+    });
 
-    const attackFlows: AttackFlow[] = trafficData?.topAttacks.result.top_0
-      .map((attack: RawAttack) => {
-        const originCoords =
-          hotspotMap[attack.originCountryAlpha2] ??
-          getCountryCentroid(attack.originCountryAlpha2);
-
-        const targetCoords =
-          hotspotMap[attack.targetCountryAlpha2] ??
-          getCountryCentroid(attack.targetCountryAlpha2);
-
-        return {
-          id: `${attack.originCountryAlpha2}_to_${attack.targetCountryAlpha2}`,
-          originCountry: attack.originCountryName,
-          originCountryCode: attack.originCountryAlpha2,
-          targetCountry: attack.targetCountryName,
-          targetCountryCode: attack.targetCountryAlpha2,
-          magnitude: parseFloat(attack.value),
-          originCoords,
-          targetCoords,
-        };
-      })
-      .filter((flow: AttackFlow) => flow.originCoords && flow.targetCoords);
-
-    console.log(`[CRON] Extracted ${attackFlows.length} attack flows`);
-    // ============================================
-    // STEP 10: Store in Redis
-    // ============================================
-    console.log("[CRON] Storing in Redis...");
-
-    await Promise.all([
-      redis.set("threats:latest", JSON.stringify(threats), { ex: 86400 }),
-      redis.set("hotspots:latest", JSON.stringify(hotspots), { ex: 86400 }),
-      redis.set("stats:summary", JSON.stringify(stats), { ex: 86400 }),
-      redis.set("flows:latest", JSON.stringify(attackFlows), { ex: 86400 }),
-    ]);
+    if (!cacheResponse.ok) {
+      throw new Error("Failed to cache data");
+    }
 
     console.log("[CRON] Refresh complete!");
 
@@ -325,6 +171,7 @@ export async function GET(request: Request) {
         hotspotsGenerated: hotspots.length,
         highSeverity: stats.highSeverityCount,
         bgpHijacks: stats.bgpHijackCount,
+        attackFlows: attackFlows.length,
       },
     });
   } catch (error) {
@@ -337,44 +184,8 @@ export async function GET(request: Request) {
 }
 
 // ============================================
-// Helper Functions
+// Helper Functions (kept in cron)
 // ============================================
-
-/**
- * Extract first usable IP from CIDR notation
- * Example: "1.1.1.0/24" → "1.1.1.1"
- */
-function getFirstIPFromCIDR(cidr: string): string | null {
-  try {
-    const [baseIP, mask] = cidr.split("/");
-    const parts = baseIP.split(".").map(Number);
-
-    // For /24, just use .1
-    if (parseInt(mask) === 24) {
-      return `${parts[0]}.${parts[1]}.${parts[2]}.1`;
-    }
-
-    // For other masks, still use first IP
-    return `${parts[0]}.${parts[1]}.${parts[2]}.${parts[3] + 1}`;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Build country hotness map from Cloudflare top origins
- */
-function buildCountryHotness(topOrigins: any[]): Map<string, number> {
-  const map = new Map<string, number>();
-
-  topOrigins.forEach((origin, index) => {
-    // Rank 1 = 100, Rank 2 = 80, Rank 3 = 60, Rank 4 = 40, Rank 5 = 20
-    const score = Math.max(0, 100 - index * 20);
-    map.set(origin.originCountryAlpha2, score);
-  });
-
-  return map;
-}
 
 /**
  * Build hotspot data for heatmap
@@ -445,86 +256,4 @@ function buildHotspots(
   });
 
   return hotspots.sort((a, b) => b.threatDensity - a.threatDensity);
-}
-
-function extractASN(asString: string | null): number | null {
-  if (!asString) return null;
-  const match = asString.match(/AS(\d+)/);
-  return match ? parseInt(match[1]) : null;
-}
-function calculateBGPAttackMagnitude(
-  hijackEvent: any,
-  countryCode: string,
-  topAttacks: any[],
-): number {
-  // 1. Base score from BGP confidence (0-12 scale)
-  // Scale to 0-50 (half of total magnitude)
-  const bgpScore = (hijackEvent.confidence_score / 12) * 50;
-
-  // 2. Country-level attack percentage
-  // Find if this country is in topAttacks as origin
-  const countryAttacks = topAttacks.filter(
-    (attack) => attack.originCountryAlpha2 === countryCode,
-  );
-
-  // Sum all attack percentages where this country is the origin
-  const totalCountryAttackPercent = countryAttacks.reduce(
-    (sum, attack) => sum + parseFloat(attack.value),
-    0,
-  );
-
-  // Scale to 0-30
-  const countryScore = Math.min(30, totalCountryAttackPercent * 1.5);
-
-  // 3. Hijack duration bonus (longer = more severe)
-  // Duration in seconds, normalize to 0-20
-  const durationMinutes = hijackEvent.duration / 60;
-  const durationScore = Math.min(20, durationMinutes / 10);
-
-  return Math.round(bgpScore + countryScore + durationScore);
-}
-
-function calculateBlacklistAttackMagnitude(
-  abuseEntry: any,
-  countryCode: string,
-  topAttacks: any[],
-): number {
-  // 1. Base score from total reports
-  // More reports = more attack activity
-  const reportScore = Math.min(40, abuseEntry.totalReports * 2);
-
-  // 2. Country-level attack percentage (same as above)
-  const countryAttacks = topAttacks.filter(
-    (attack) => attack.originCountryAlpha2 === countryCode,
-  );
-
-  const totalCountryAttackPercent = countryAttacks.reduce(
-    (sum, attack) => sum + parseFloat(attack.value),
-    0,
-  );
-
-  const countryScore = Math.min(30, totalCountryAttackPercent * 1.5);
-
-  // 3. Recency bonus
-  // More recent = higher score
-  const lastReported = new Date(abuseEntry.lastReportedAt);
-  const hoursSinceReport =
-    (Date.now() - lastReported.getTime()) / (1000 * 60 * 60);
-  const recencyScore = Math.max(0, 30 - hoursSinceReport);
-
-  return Math.round(reportScore + countryScore + recencyScore);
-}
-
-type Centroid = { lat: number; lon: number };
-
-// Build a lookup map once
-const centroidMap: Record<string, Centroid> = Object.fromEntries(
-  centroidsArray.map((c: any) => [
-    c.alpha2,
-    { lat: c.latitude, lon: c.longitude },
-  ]),
-);
-
-export function getCountryCentroid(countryCode: string): Centroid | null {
-  return centroidMap[countryCode.toUpperCase()] || null;
 }
