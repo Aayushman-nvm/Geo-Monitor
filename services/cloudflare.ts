@@ -11,7 +11,7 @@ const headers = {
 };
 
 //Fetch function
-async function fetchFromCloudflare(endpoint:string) {
+async function fetchFromCloudflare(endpoint: string) {
   try {
     const response = await fetch(`${BASE_URL}${endpoint}`, { headers });
 
@@ -33,25 +33,44 @@ const ENDPOINTS_ANOMALIES = {
   outages: "/radar/annotations/outages?dateRange=7d",
   bgpHijacks: "/radar/bgp/hijacks/events",
   asnList: "/radar/entities/asns",
-  ipAsn: "/radar/entities/asns/ip?dateRange=7d&ip=196.220.224.0",
 };
 
+/**
+ * Fetch anomalies (outages, BGP hijacks, ASN list). Do NOT perform ip->ASN lookup here
+ * because we need to use IPs extracted from traffic/hijack data. Use getIpAsn(ip)
+ * when an IP is known.
+ */
 export async function getAnomalies() {
   try {
-    const [outages, bgpHijacks, asnList, ipAsn] = await Promise.all([
+    const [outages, bgpHijacks, asnList] = await Promise.all([
       fetchFromCloudflare(ENDPOINTS_ANOMALIES.outages),
       fetchFromCloudflare(ENDPOINTS_ANOMALIES.bgpHijacks),
       fetchFromCloudflare(ENDPOINTS_ANOMALIES.asnList),
-      fetchFromCloudflare(ENDPOINTS_ANOMALIES.ipAsn),
     ]);
 
-    const result = { outages, bgpHijacks, asnList, ipAsn };
+    const result = { outages, bgpHijacks, asnList };
 
-    console.log("Anomalies Data: Fetched ");
+    console.log("Anomalies Data: Fetched");
 
     return result;
   } catch (error) {
     console.error("Error in getAnomalies:", error);
+    return null;
+  }
+}
+
+/**
+ * Dynamic IP -> ASN lookup. Call this with a real IP (from traffic or hijack data)
+ * instead of relying on a hardcoded IP.
+ */
+export async function getIpAsn(ip: string) {
+  if (!ip) return null;
+  const endpoint = `/radar/entities/asns/ip?dateRange=7d&ip=${encodeURIComponent(ip)}`;
+  try {
+    const data = await fetchFromCloudflare(endpoint);
+    return data;
+  } catch (err) {
+    console.error(`Error fetching ASN info for ip=${ip}:`, err);
     return null;
   }
 }
