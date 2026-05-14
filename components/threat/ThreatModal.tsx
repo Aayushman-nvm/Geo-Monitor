@@ -7,6 +7,7 @@ import { RedisThreat } from "@/types/redis";
 import Popup from "@/components/ui/Popup";
 import Button from "@/components/ui/Button";
 import Card, { CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
+import type { CloudflareAsnInfo } from '@/services/cloudflare';
 
 interface ThreatModalProps {
   threat: RedisThreat | null;
@@ -15,7 +16,7 @@ interface ThreatModalProps {
 
 export default function ThreatModal({ threat, onClose }: ThreatModalProps) {
   const [loadingASN, setLoadingASN] = useState(false);
-  const [asnDetails, setASNDetails] = useState<any>(null);
+  const [asnDetails, setASNDetails] = useState<CloudflareAsnInfo | null>(null);
   const [loadingSummary, setLoadingSummary] = useState(false);
   const [aiSummary, setAISummary] = useState<string | null>(null);
 
