@@ -3,6 +3,7 @@
 import { NextResponse } from "next/server";
 import type { AttackFlow, RawAttack, RedisHotspot } from "@/types/redis";
 import centroidsArray from "@/data/country-centroid.json";
+import type { CountryCentroid } from "@/types/types"
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
@@ -78,7 +79,7 @@ type Centroid = { lat: number; lon: number };
 
 // Build a lookup map once
 const centroidMap: Record<string, Centroid> = Object.fromEntries(
-  centroidsArray.map((c: any) => [
+  centroidsArray.map((c: CountryCentroid) => [
     c.alpha2,
     { lat: c.latitude, lon: c.longitude },
   ]),
