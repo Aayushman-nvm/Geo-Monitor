@@ -4,7 +4,7 @@
 
 import { useMemo, useState } from 'react';
 import { RedisThreat } from '@/types/redis';
-import { MapPin, AlertTriangle, Activity } from 'lucide-react';
+import { MapPin, AlertTriangle } from 'lucide-react';
 import Popup from '@/components/ui/Popup';
 import Card from '@/components/ui/Card';
 
@@ -15,14 +15,17 @@ interface ThreatListModalProps {
   onClose: () => void;
 }
 
+type SortOption = 'score' | 'recent' | 'city';
+type FilterOption = 'all' | 'critical' | 'high';
+
 export default function ThreatListModal({
   countryCode,
   threats,
   onThreatClick,
   onClose,
 }: ThreatListModalProps) {
-  const [sortBy, setSortBy] = useState<'score' | 'recent' | 'city'>('score');
-  const [filterSeverity, setFilterSeverity] = useState<'all' | 'critical' | 'high'>('all');
+  const [sortBy, setSortBy] = useState<SortOption>('score');
+  const [filterSeverity, setFilterSeverity] = useState<FilterOption>('all');
 
   // Sort and filter threats
   const filteredThreats = useMemo(() => {
@@ -88,7 +91,7 @@ export default function ThreatListModal({
         <div className="flex flex-wrap gap-2 text-xs">
           <select
             value={sortBy}
-            onChange={(e) => setSortBy(e.target.value as any)}
+            onChange={(e) => setSortBy(e.target.value as SortOption)}
             className="bg-gray-900 text-white px-3 py-1.5 rounded-lg border border-gray-800 focus:border-gray-700 focus:outline-none"
           >
             <option value="score">By Score</option>
@@ -98,7 +101,7 @@ export default function ThreatListModal({
 
           <select
             value={filterSeverity}
-            onChange={(e) => setFilterSeverity(e.target.value as any)}
+            onChange={(e) => setFilterSeverity(e.target.value as FilterOption)}
             className="bg-gray-900 text-white px-3 py-1.5 rounded-lg border border-gray-800 focus:border-gray-700 focus:outline-none"
           >
             <option value="all">All Threats</option>
