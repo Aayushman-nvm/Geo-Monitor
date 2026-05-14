@@ -2,10 +2,11 @@
 
 import { NextResponse } from "next/server";
 import { getBlacklist } from "@/services/abuseipdb";
-import { geolocateBatch } from "@/services/geolocateIP";
-import { getIpAsn } from '@/services/cloudflare';
+import { geolocateBatch, GeoEntry } from "@/services/geolocateIP";
+import { getIpAsn, CloudflareAsnInfo } from '@/services/cloudflare';
 import { redis } from "@/lib/redis";
 import type { BlacklistItem } from "@/types/redis";
+import type { CloudflareBGPEvent, AbuseIPDBBlacklist } from "@/types/types"
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -28,13 +29,17 @@ export async function POST(request: Request) {
     // ============================================
     console.log("[ENRICH-IPS] Extracting IPs from BGP hijacks...");
 
-    const hijackIPs: Array<{
-      ip: string;
-      hijack: any;
-    }> = [];
+    interface HijackEvent {
+      id: number;
+      confidence_score: number;
+      prefixes: string[];
+      hijack?: CloudflareBGPEvent;
+    }
+
+    const hijackIPs: Array<{ ip: string; hijack: HijackEvent }> = [];
 
     // Process BGP hijack events
-    const hijackEvents = bgpHijacks?.result?.events || [];
+    const hijackEvents: HijackEvent[] = bgpHijacks?.result?.events || [];
 
     for (const event of hijackEvents) {
       // Only process high-confidence hijacks
@@ -58,7 +63,7 @@ export async function POST(request: Request) {
     // HYBRID: Check Redis for Blacklist First
     // AbuseIPDB updates once per day, has 5 calls/day limit
     // ============================================
-    let blacklist: any = { data: [] };
+    let blacklist: AbuseIPDBBlacklist = { meta: { generatedAt: '' }, data: [] }
 
     if (includeBlacklist) {
       const cachedBlacklist = await redis.get("abuseipdb:blacklist");
@@ -99,7 +104,7 @@ export async function POST(request: Request) {
     // ============================================
     console.log("[ENRICH-IPS] Geolocating IPs...");
 
-    const geoData: any[] = [];
+    const geoData: GeoEntry[] = [];
     const uncachedIPs: string[] = [];
 
     // Check which IPs we already have cached
@@ -136,7 +141,7 @@ export async function POST(request: Request) {
     // ============================================
     const asnHashKey = 'asn:ips';
     const lookupIPs: string[] = [];
-    const geoByIp = new Map<string, any>();
+    const geoByIp = new Map<string, GeoEntry>;
 
     for (const g of geoData) geoByIp.set(g.ip, g);
 
@@ -148,8 +153,10 @@ export async function POST(request: Request) {
       try {
         const cached = await redis.hget(asnHashKey, geo.ip);
         if (cached) {
-          const asnInfo = JSON.parse(cached as string);
-          geo.as = `AS${asnInfo.asn} ${asnInfo.orgName || asnInfo.name || ''}`.trim();
+          const asnInfo = JSON.parse(cached as string) as CloudflareAsnInfo;
+          const asnNum = asnInfo.asn;
+          const orgName = (asnInfo.orgName || asnInfo.name || '') as string;
+          geo.as = `AS${asnNum} ${orgName}`.trim();
           geo.asnDetails = asnInfo;
           // Update geo cache with merged ASN info
           await redis.set(`geo:ip:${geo.ip}`, JSON.stringify(geo), { ex: 604800 });
@@ -166,16 +173,19 @@ export async function POST(request: Request) {
     for (const ip of lookupIPs) {
       try {
         const asnRes = await getIpAsn(ip);
-        const asnInfo = asnRes?.result?.asn || null;
-        if (asnInfo) {
+        const asnInfoRaw = asnRes?.result?.asn || null;
+        if (asnInfoRaw) {
+          const asnInfo = asnInfoRaw as CloudflareAsnInfo;
           // Cache in single redis hash
           await redis.hset(asnHashKey, { [ip]: JSON.stringify(asnInfo) });
 
           // Merge into geo entry and update geo cache
           const geo = geoByIp.get(ip);
           if (geo) {
-            geo.as = `AS${asnInfo.asn} ${asnInfo.orgName || asnInfo.name || ''}`.trim();
-            geo.asnDetails = asnInfo;
+            const asnNum = asnInfo.asn;
+            const orgName = (asnInfo.orgName || asnInfo.name || '') as string;
+            geo.as = `AS${asnNum} ${orgName}`.trim();
+            geo.asnDetails = asnInfo as CloudflareAsnInfo;
             await redis.set(`geo:ip:${ip}`, JSON.stringify(geo), { ex: 604800 });
           }
         }
@@ -207,7 +217,7 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error("[ENRICH-IPS] Error:", error);
     return NextResponse.json(
-      { error: "IP enrichment failed", details: error },
+      { error: "IP enrichment failed", details: String(error) },
       { status: 500 },
     );
   }
