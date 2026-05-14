@@ -6,6 +6,7 @@
  */
 
 import type { RedisThreat } from "@/types/redis";
+import type { CloudflareTopOrigin, CloudflareTopAttack } from "@/types/types"
 
 /**
  * Extract ASN number from AS string
@@ -42,10 +43,10 @@ export function getFirstIPFromCIDR(cidr: string): string | null {
  * Build country hotness map from Cloudflare top origins
  * Returns a map of country code → hotness score (0-100)
  */
-export function buildCountryHotness(topOrigins: any[]): Map<string, number> {
+export function buildCountryHotness(topOrigins: CloudflareTopOrigin[]): Map<string, number> {
   const map = new Map<string, number>();
 
-  topOrigins.forEach((origin: any, index: number) => {
+  topOrigins.forEach((origin, index) => {
     // Rank 1 = 100, Rank 2 = 80, Rank 3 = 60, Rank 4 = 40, Rank 5 = 20
     const score = Math.max(0, 100 - index * 20);
     map.set(origin.originCountryAlpha2, score);
@@ -63,7 +64,7 @@ export function calculateBGPAttackMagnitude(
     duration: number;
   },
   countryCode: string,
-  topAttacks: any[],
+  topAttacks: CloudflareTopAttack[],
 ): number {
   // 1. Base score from BGP confidence (0-12 scale)
   // Scale to 0-50 (half of total magnitude)
@@ -71,11 +72,11 @@ export function calculateBGPAttackMagnitude(
 
   // 2. Country-level attack percentage
   const countryAttacks = topAttacks.filter(
-    (attack: any) => attack.originCountryAlpha2 === countryCode,
+    (attack) => attack.originCountryAlpha2 === countryCode,
   );
 
   const totalCountryAttackPercent = countryAttacks.reduce(
-    (sum: number, attack: any) => sum + parseFloat(attack.value),
+    (sum: number, attack) => sum + parseFloat(attack.value),
     0,
   );
 
@@ -97,18 +98,18 @@ export function calculateBlacklistAttackMagnitude(
     lastReportedAt: string;
   },
   countryCode: string,
-  topAttacks: any[],
+  topAttacks: CloudflareTopAttack[],
 ): number {
   // 1. Base score from total reports
   const reportScore = Math.min(40, abuseEntry.totalReports * 2);
 
   // 2. Country-level attack percentage
   const countryAttacks = topAttacks.filter(
-    (attack: any) => attack.originCountryAlpha2 === countryCode,
+    (attack) => attack.originCountryAlpha2 === countryCode,
   );
 
   const totalCountryAttackPercent = countryAttacks.reduce(
-    (sum: number, attack: any) => sum + parseFloat(attack.value),
+    (sum: number, attack) => sum + parseFloat(attack.value),
     0,
   );
 
