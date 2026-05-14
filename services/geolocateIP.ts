@@ -3,12 +3,12 @@ dotenv.config();
 
 const baseUrl = "http://ip-api.com/json";
 
-interface GeoResponse {
-  status: "success" | "fail";
+export interface GeoEntry {
+  ip: string;
   country?: string;
   countryCode?: string;
   region?: string;
-  regionName?: string;
+  regionCode?: string;
   city?: string;
   zip?: string;
   lat?: number;
@@ -17,16 +17,37 @@ interface GeoResponse {
   isp?: string;
   org?: string;
   as?: string;
-  query?: string;
-  message?: string;
+  asn?: string;
+  asnDetails?: Record<string, unknown> | null;
+  status: 'success' | 'fail' | 'error';
+  error?: string;
+  raw?: unknown;
 }
 
+interface GeoResponse {
+   status: "success" | "fail";
+   country?: string;
+   countryCode?: string;
+   region?: string;
+   regionName?: string;
+   city?: string;
+   zip?: string;
+   lat?: number;
+   lon?: number;
+   timezone?: string;
+   isp?: string;
+   org?: string;
+   as?: string;
+   query?: string;
+   message?: string;
+ }
+ 
 export async function geolocateBatch(
   uniqueIPs: string[] | string,
   delayMs: number = 1400
-) {
+): Promise<GeoEntry[]> {
   const ips = Array.isArray(uniqueIPs) ? uniqueIPs : [uniqueIPs];
-  const results: any[] = [];
+  const results: GeoEntry[] = [];
 
   console.log(`[GEO LOCATE] Started - Total IPs: ${ips.length}`);
 
@@ -36,9 +57,14 @@ export async function geolocateBatch(
       const data: GeoResponse = await res.json();
 
       if (data.status === "success") {
+        // Safely extract optional fields that may not be declared on GeoResponse
+        const rawRecord = data as unknown as Record<string, unknown>;
+        const asField = typeof rawRecord['as'] === 'string' ? (rawRecord['as'] as string) : undefined;
+        const asnField = typeof rawRecord['asn'] === 'string' ? (rawRecord['asn'] as string) : undefined;
+        const asnDetailsField = rawRecord['asnDetails'] ? (rawRecord['asnDetails'] as Record<string, unknown>) : undefined;
+
         results.push({
-          // 🔹 Clean fields
-          ip: data.query,
+          ip: data.query || ip,
           country: data.country,
           countryCode: data.countryCode,
           region: data.regionName,
@@ -48,32 +74,23 @@ export async function geolocateBatch(
           lat: data.lat,
           lon: data.lon,
           timezone: data.timezone,
-
-          // 🔹 Network
           isp: data.isp,
           org: data.org,
-          as: data.as,
-
-          // 🔹 Status
-          status: data.status,
-
-          // 🔹 Full raw response
-          raw: data
+          as: asField,
+          asn: asnField,
+          asnDetails: asnDetailsField ?? null,
+          status: 'success',
+          raw: data,
         });
-      } else {
-        results.push({
-          ip,
-          status: data.status,
-          error: data.message || "Lookup failed",
-          raw: data
-        });
-      }
+       } else {
+        results.push({ ip, status: 'fail', raw: data, error: data.message || 'Lookup failed' });
+       }
 
-    } catch (err: any) {
+    } catch (err) {
       results.push({
         ip,
         status: "error",
-        error: err.message || "Network error"
+        error: "Geo Locate IP error"
       });
     }
 
