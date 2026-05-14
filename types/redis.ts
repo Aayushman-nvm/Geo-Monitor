@@ -64,7 +64,7 @@ export interface RedisHotspot {
   countryName: string;                 // "Brazil"
   
   // Derived from Cloudflare data
-  attackOriginRank: number;            // 1-5 (from topOrigins)
+  attackOriginRank: number | null;            // 1-5 (from topOrigins)
   attackOriginPercent: number | null;         // 22.7% (from topOrigins)
   attackTargetRank: number | null;     // 5 (from topTargets) or null
   attackTargetPercent: number | null;  // 2.8% or null
