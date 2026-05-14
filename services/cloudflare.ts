@@ -63,12 +63,24 @@ export async function getAnomalies() {
  * Dynamic IP -> ASN lookup. Call this with a real IP (from traffic or hijack data)
  * instead of relying on a hardcoded IP.
  */
-export async function getIpAsn(ip: string) {
+export interface CloudflareAsnInfo {
+  asn: number;
+  name?: string;
+  orgName?: string;
+  website?: string;
+  country?: string;
+  countryName?: string;
+  source?: string;
+  estimatedUsers?: { estimatedUsers?: number; locations?: Array<Record<string, unknown>> };
+  [k: string]: unknown;
+}
+
+export async function getIpAsn(ip: string): Promise<{ result?: { asn?: CloudflareAsnInfo } } | null> {
   if (!ip) return null;
   const endpoint = `/radar/entities/asns/ip?dateRange=7d&ip=${encodeURIComponent(ip)}`;
   try {
     const data = await fetchFromCloudflare(endpoint);
-    return data;
+    return data as { result?: { asn?: CloudflareAsnInfo } } | null;
   } catch (err) {
     console.error(`Error fetching ASN info for ip=${ip}:`, err);
     return null;
