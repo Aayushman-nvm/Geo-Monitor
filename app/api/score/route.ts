@@ -3,6 +3,7 @@
 import { NextResponse } from "next/server";
 import { calculateThreatScore } from "@/lib/scoring/calculateScore";
 import type { RedisThreat, BlacklistItem } from "@/types/redis";
+import type { CloudflareTopOrigin, HijackIPEntry, CloudflareTopAttack } from "@/types/types"
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -26,6 +27,10 @@ export async function POST(request: Request) {
       topOrigins, 
       topAttacks 
     } = body;
+    
+    interface TopAttack { originCountryAlpha2: string; originCountryName: string; targetCountryAlpha2?: string; targetCountryName?: string; value: string }
+
+    const topAttacksTyped: TopAttack[] = topAttacks || [];
 
     // ============================================
     // Build Country Hotness Map
@@ -43,12 +48,12 @@ export async function POST(request: Request) {
       const geo = geoData[i];
       const ip = uniqueIPs[i];
 
-      const hijackSource = hijackIPs.find((h: any) => h.ip === ip);
+      const hijackSource = hijackIPs.find((h: HijackIPEntry) => h.ip === ip);
       const abuseEntry = blacklist.find(
         (b: BlacklistItem) => b.ipAddress === ip,
       );
 
-      const asn = extractASN(geo.as);
+      const asn = extractASN(geo?.as || null);
       if (!asn) continue;
 
       // Get country hotness
@@ -169,10 +174,10 @@ export async function POST(request: Request) {
 /**
  * Build country hotness map from Cloudflare top origins
  */
-function buildCountryHotness(topOrigins: any[]): Map<string, number> {
+function buildCountryHotness(topOrigins: CloudflareTopOrigin[]): Map<string, number> {
   const map = new Map<string, number>();
 
-  topOrigins.forEach((origin: any, index: number) => {
+  topOrigins.forEach((origin, index) => {
     // Rank 1 = 100, Rank 2 = 80, Rank 3 = 60, Rank 4 = 40, Rank 5 = 20
     const score = Math.max(0, 100 - index * 20);
     map.set(origin.originCountryAlpha2, score);
@@ -188,21 +193,21 @@ function extractASN(asString: string | null): number | null {
 }
 
 function calculateBGPAttackMagnitude(
-  hijackEvent: any,
+  hijackEvent: { confidence_score?: number ; duration: number; confidenceScore?: number },
   countryCode: string,
-  topAttacks: any[],
+  topAttacks: CloudflareTopAttack[],
 ): number {
   // 1. Base score from BGP confidence (0-12 scale)
   // Scale to 0-50 (half of total magnitude)
-  const bgpScore = (hijackEvent.confidence_score / 12) * 50;
+  const bgpScore = (hijackEvent?.confidence_score! / 12) * 50;
 
   // 2. Country-level attack percentage
   const countryAttacks = topAttacks.filter(
-    (attack: any) => attack.originCountryAlpha2 === countryCode,
+    (attack) => attack.originCountryAlpha2 === countryCode,
   );
 
   const totalCountryAttackPercent = countryAttacks.reduce(
-    (sum: number, attack: any) => sum + parseFloat(attack.value),
+    (sum, attack) => sum + parseFloat(attack.value),
     0,
   );
 
@@ -216,20 +221,20 @@ function calculateBGPAttackMagnitude(
 }
 
 function calculateBlacklistAttackMagnitude(
-  abuseEntry: any,
+  abuseEntry: { totalReports: number; lastReportedAt: string },
   countryCode: string,
-  topAttacks: any[],
+  topAttacks: CloudflareTopAttack[],
 ): number {
   // 1. Base score from total reports
   const reportScore = Math.min(40, abuseEntry.totalReports * 2);
 
   // 2. Country-level attack percentage
   const countryAttacks = topAttacks.filter(
-    (attack: any) => attack.originCountryAlpha2 === countryCode,
+    (attack) => attack.originCountryAlpha2 === countryCode,
   );
 
   const totalCountryAttackPercent = countryAttacks.reduce(
-    (sum: number, attack: any) => sum + parseFloat(attack.value),
+    (sum, attack) => sum + parseFloat(attack.value),
     0,
   );
 
