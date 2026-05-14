@@ -6,6 +6,7 @@ import type {
   RedisHotspot,
   RedisStats,
 } from "@/types/redis";
+import type { CloudflareTopOrigin, CloudflareTopTarget } from "@/types/types"
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -192,8 +193,8 @@ export async function GET(request: Request) {
  */
 function buildHotspots(
   threats: RedisThreat[],
-  topOrigins: any[],
-  topTargets: any[],
+  topOrigins: CloudflareTopOrigin[],
+  topTargets: CloudflareTopTarget[],
 ): RedisHotspot[] {
   const byCountry = new Map<string, RedisThreat[]>();
 
