@@ -3,8 +3,9 @@
 import { useEffect, useRef } from "react";
 import Globe from "three-globe";
 import * as THREE from "three";
+import type { WorldGlobeProps, CloudflareBGPHijacks, CloudflareOutages } from "@/types/types"
 
-export function World({ data, globeConfig }: any) {
+export function World({ data, globeConfig }: WorldGlobeProps) {
   const globeRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
