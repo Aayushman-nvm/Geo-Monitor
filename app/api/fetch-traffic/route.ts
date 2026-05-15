@@ -5,7 +5,7 @@ import { redis } from "@/lib/redis";
 import type { CloudflareTrafficData, CloudflareBGPHijacks, CloudflareOutages } from "@/types/types"
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 30;
+export const maxDuration = 300;
 
 export async function GET(request: Request) {
   try {
