@@ -9,7 +9,7 @@ import type { BlacklistItem } from "@/types/redis";
 import type { CloudflareBGPEvent, AbuseIPDBBlacklist } from "@/types/types"
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 export async function POST(request: Request) {
   try {
@@ -106,10 +106,11 @@ export async function POST(request: Request) {
 
     const geoData: GeoEntry[] = [];
     const uncachedIPs: string[] = [];
+    const geoHashKey = 'geo:ips';
 
-    // Check which IPs we already have cached
+    // Check which IPs we already have cached in the single HASH
     const geoCheckPromises = uniqueIPs.map(async (ip) => {
-      const cached = await redis.get(`geo:ip:${ip}`);
+      const cached = await redis.hget(geoHashKey, ip);
       if (cached) {
         geoData.push(JSON.parse(cached as string));
       } else {
@@ -125,12 +126,24 @@ export async function POST(request: Request) {
     if (uncachedIPs.length > 0) {
       const freshGeoData = await geolocateBatch(uncachedIPs, 1400);
 
-      // Cache each fresh result for 7 days (604800 seconds)
-      const cachePromises = freshGeoData.map((geo) =>
-        redis.set(`geo:ip:${geo.ip}`, JSON.stringify(geo), { ex: 604800 })
-      );
-
-      await Promise.all(cachePromises);
+      // Cache fresh results in the single Redis HASH to avoid many top-level keys
+      try {
+        const hsetPayload: Record<string, string> = {};
+        freshGeoData.forEach((g) => {
+          hsetPayload[g.ip] = JSON.stringify(g);
+        });
+        if (Object.keys(hsetPayload).length > 0) {
+          await redis.hset(geoHashKey, hsetPayload);
+          // Set TTL on the hash (applies to entire hash). Refresh TTL on writes.
+          try {
+            await redis.expire(geoHashKey, 604800);
+          } catch (err) {
+            // expire may not be supported by some clients; ignore if it fails
+          }
+        }
+      } catch (err) {
+        console.error('[ENRICH-IPS] Failed to cache fresh geo data in hash', err);
+      }
 
       geoData.push(...freshGeoData);
     }
@@ -158,8 +171,13 @@ export async function POST(request: Request) {
           const orgName = (asnInfo.orgName || asnInfo.name || '') as string;
           geo.as = `AS${asnNum} ${orgName}`.trim();
           geo.asnDetails = asnInfo;
-          // Update geo cache with merged ASN info
-          await redis.set(`geo:ip:${geo.ip}`, JSON.stringify(geo), { ex: 604800 });
+          // Update geo cache (hash) with merged ASN info
+          try {
+            await redis.hset(geoHashKey, { [geo.ip]: JSON.stringify(geo) });
+            await redis.expire(geoHashKey, 604800);
+          } catch (err) {
+            console.error('[ENRICH-IPS] Failed to update geo hash with ASN info', err);
+          }
         } else {
           lookupIPs.push(geo.ip);
         }
@@ -186,7 +204,12 @@ export async function POST(request: Request) {
             const orgName = (asnInfo.orgName || asnInfo.name || '') as string;
             geo.as = `AS${asnNum} ${orgName}`.trim();
             geo.asnDetails = asnInfo as CloudflareAsnInfo;
-            await redis.set(`geo:ip:${ip}`, JSON.stringify(geo), { ex: 604800 });
+            try {
+              await redis.hset(geoHashKey, { [ip]: JSON.stringify(geo) });
+              await redis.expire(geoHashKey, 604800);
+            } catch (err) {
+              console.error('[ENRICH-IPS] Failed to update geo hash after ASN lookup', err);
+            }
           }
         }
       } catch (err) {
