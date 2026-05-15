@@ -6,7 +6,7 @@ import centroidsArray from "@/data/country-centroid.json";
 import type { CountryCentroid } from "@/types/types"
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 10;
+export const maxDuration = 300;
 
 export async function POST(request: Request) {
   try {
