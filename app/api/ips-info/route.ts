@@ -1,11 +1,40 @@
 import { getIPDetails } from "@/services/abuseipdb";
 import { NextResponse } from "next/server";
 import { geolocateBatch } from "@/services/geolocateIP";
-import { getIpAsn } from "@/services/cloudflare";
+import { getIpAsn, CloudflareAsnInfo } from "@/services/cloudflare";
 import { redis } from "@/lib/redis";
+import type { GeoEntry, CloudflareTopTarget } from "@/types/types"
+
+// Normalized ASN shape returned to frontend
+interface NormalizedAsn {
+  asn: number | null;
+  name?: string | null;
+  orgName?: string | null;
+  website?: string | null;
+  country?: string | null;
+  countryName?: string | null;
+  source?: string | null;
+  estimatedUsers?: number | null;
+  _raw?: unknown;
+}
+
+// AbuseIPDB response (partial, only fields we use)
+interface AbuseIpData {
+  data?: {
+    ipAddress?: string;
+    countryCode?: string;
+    abuseConfidenceScore?: number;
+    lastReportedAt?: string;
+    totalReports?: number;
+    [k: string]: unknown;
+  };
+  [k: string]: unknown;
+}
+
+interface AbuseCacheEntry { fetchedAt: string; data: AbuseIpData }
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 30;
+export const maxDuration = 300;
 
 export async function POST(req: Request) {
   try {
@@ -22,7 +51,7 @@ export async function POST(req: Request) {
     const asnHashKey = "asn:ips";
 
     // Try cache for geo
-    let geo: any = null;
+    let geo: GeoEntry | null = null;
     let geoCached = false;
     try {
       const cached = await redis.get(geoCacheKey);
@@ -54,55 +83,48 @@ export async function POST(req: Request) {
     }
 
     // Normalize function to produce consistent ASN payload for frontend
-    const normalizeAsn = (raw: any) => {
+    const normalizeAsn = (raw: unknown): NormalizedAsn | null => {
       if (!raw) return null;
+      const r = raw as Record<string, unknown>;
       const asnNum =
-        raw.asn ||
-        raw.ASN ||
-        (raw.asn_number && Number(raw.asn_number)) ||
-        null;
-      const name = raw.name || raw.orgName || raw.org_name || null;
-      const orgName = raw.orgName || raw.org_name || raw.name || null;
-      const website = raw.website || raw.url || null;
-      const country = raw.country || raw.countryName || raw.country_name || null;
-      const countryName =
-        raw.countryName || raw.country_name || raw.country || null;
-      const source = raw.source || raw.sourceName || null;
-      // estimatedUsers can be a number or an object { estimatedUsers: N }
-      let estimatedUsers = null;
-      if (raw.estimatedUsers && typeof raw.estimatedUsers === "number")
-        estimatedUsers = raw.estimatedUsers;
-      else if (
-        raw.estimatedUsers &&
-        typeof raw.estimatedUsers === "object" &&
-        raw.estimatedUsers.estimatedUsers
-      )
-        estimatedUsers = raw.estimatedUsers.estimatedUsers;
-      else if (raw.estimated_users && typeof raw.estimated_users === "number")
-        estimatedUsers = raw.estimated_users;
+        (typeof r['asn'] === 'number' ? (r['asn'] as number) : null) ||
+        (typeof r['ASN'] === 'number' ? (r['ASN'] as number) : null) ||
+        (r['asn_number'] ? Number(r['asn_number']) : null) || null;
+
+      const name = (r['name'] as string) || (r['orgName'] as string) || (r['org_name'] as string) || null;
+      const orgName = (r['orgName'] as string) || (r['org_name'] as string) || (r['name'] as string) || null;
+      const website = (r['website'] as string) || (r['url'] as string) || null;
+      const country = (r['country'] as string) || (r['countryName'] as string) || (r['country_name'] as string) || null;
+      const countryName = (r['countryName'] as string) || (r['country_name'] as string) || (r['country'] as string) || null;
+      const source = (r['source'] as string) || (r['sourceName'] as string) || null;
+
+      // estimatedUsers can be a number or nested object
+      let estimatedUsers: number | null = null;
+      if (typeof r['estimatedUsers'] === 'number') estimatedUsers = r['estimatedUsers'] as number;
+      else if (r['estimatedUsers'] && typeof r['estimatedUsers'] === 'object' && (r['estimatedUsers'] as any).estimatedUsers) estimatedUsers = Number((r['estimatedUsers'] as any).estimatedUsers);
+      else if (typeof r['estimated_users'] === 'number') estimatedUsers = r['estimated_users'] as number;
 
       return {
         asn: asnNum,
-        name,
-        orgName,
-        website,
-        country,
-        countryName,
-        source,
-        estimatedUsers,
-        // keep raw for debugging if needed
+        name: name ?? null,
+        orgName: orgName ?? null,
+        website: website ?? null,
+        country: country ?? null,
+        countryName: countryName ?? null,
+        source: source ?? null,
+        estimatedUsers: estimatedUsers ?? null,
         _raw: raw,
       };
     };
 
     // Try to get ASN from redis hash
-    let asnInfo: any = null;
+    let asnInfo: NormalizedAsn | null = null;
     let asnCached = false;
 
     try {
       const cachedAsn = await redis.hget(asnHashKey, ip);
       if (cachedAsn) {
-        const parsed = JSON.parse(cachedAsn as string);
+        const parsed = JSON.parse(cachedAsn as string) as CloudflareAsnInfo;
         asnInfo = normalizeAsn(parsed);
         asnCached = true;
       }
@@ -116,16 +138,16 @@ export async function POST(req: Request) {
     if (!asnInfo && !geoHasAs) {
       try {
         const res = await getIpAsn(ip);
-        const candidate = res?.result?.asn || res?.asn || null;
+        const candidate = res?.result?.asn || null;
         if (candidate) {
-          const normalized = normalizeAsn(candidate);
-          asnInfo = normalized;
-          // cache in hash
+          const candidateInfo = candidate as CloudflareAsnInfo;
+          asnInfo = normalizeAsn(candidateInfo);
+          // cache raw candidate in hash
           try {
-            await redis.hset(asnHashKey, { [ip]: JSON.stringify(candidate) });
+            await redis.hset(asnHashKey, { [ip]: JSON.stringify(candidateInfo) });
             asnCached = true;
           } catch (err) {
-            console.error("[IPS-INFO] failed to hset asn", err);
+            console.error('[IPS-INFO] failed to hset asn', err);
           }
         }
       } catch (err) {
@@ -139,7 +161,8 @@ export async function POST(req: Request) {
         geo.as =
           geo.as ||
           `AS${asnInfo.asn} ${asnInfo.orgName || asnInfo.name || ""}`.trim();
-        geo.asnDetails = geo.asnDetails || asnInfo;
+        // cast normalized ASN to loose record to satisfy GeoEntry.asnDetails typing
+        geo.asnDetails = geo.asnDetails || (asnInfo as unknown as Record<string, unknown>);
         // update cache with merged info
         try {
           await redis.set(geoCacheKey, JSON.stringify(geo), { ex: 604800 });
@@ -149,12 +172,49 @@ export async function POST(req: Request) {
       }
     }
 
+    // ============================================
+    // AbuseIPDB enrichment (on-demand). Cached in redis hash 'abuse:ips' with fetchedAt metadata.
+    // If cached and fresh (<24h) use cache, otherwise call getIPDetails and cache result.
+    // ============================================
+    const abuseHashKey = 'abuse:ips';
+    let abuseData: AbuseIpData | null = null;
+    try {
+      const cachedAbuse = await redis.hget(abuseHashKey, ip);
+      if (cachedAbuse) {
+        const parsed = JSON.parse(cachedAbuse as string) as AbuseCacheEntry;
+        const ageMs = Date.now() - new Date(parsed.fetchedAt).getTime();
+        const oneDay = 24 * 60 * 60 * 1000;
+        if (ageMs < oneDay && parsed.data) {
+          abuseData = parsed.data as AbuseIpData;
+        }
+      }
+    } catch (err) {
+      console.error('[IPS-INFO] abuse hash read error', err);
+    }
+
+    if (!abuseData) {
+      try {
+        const ipDetails = (await getIPDetails(ip)) as AbuseIpData | null;
+        if (ipDetails) {
+          abuseData = ipDetails;
+          try {
+            await redis.hset(abuseHashKey, { [ip]: JSON.stringify({ fetchedAt: new Date().toISOString(), data: ipDetails }) });
+          } catch (err) {
+            console.error('[IPS-INFO] failed to hset abuse data', err);
+          }
+        }
+      } catch (err) {
+        console.error('[IPS-INFO] getIPDetails error', err);
+      }
+    }
+
     return NextResponse.json({
       success: true,
       data: {
         ip,
         geo: geo || null,
         asn: asnInfo || null,
+        abuse: abuseData || null,
       },
       cached: { geo: geoCached, asn: asnCached },
       timestamp: new Date().toISOString(),
