@@ -8,6 +8,7 @@ import Popup from "@/components/ui/Popup";
 import Button from "@/components/ui/Button";
 import Card, { CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import type { CloudflareAsnInfo } from '@/services/cloudflare';
+import type { AbuseIpData } from '@/types/types';
 
 interface ThreatModalProps {
   threat: RedisThreat | null;
@@ -17,7 +18,7 @@ interface ThreatModalProps {
 export default function ThreatModal({ threat, onClose }: ThreatModalProps) {
   const [loadingASN, setLoadingASN] = useState(false);
   const [asnDetails, setASNDetails] = useState<CloudflareAsnInfo | null>(null);
-  const [abuseDetails, setAbuseDetails] = useState<any | null>(null);
+  const [abuseDetails, setAbuseDetails] = useState<AbuseIpData | null>(null);
   const [loadingSummary, setLoadingSummary] = useState(false);
   const [aiSummary, setAISummary] = useState<string | null>(null);
 
@@ -36,7 +37,7 @@ export default function ThreatModal({ threat, onClose }: ThreatModalProps) {
       // api returns { success, data: { ip, geo, asn }, ... }
       const asnObj = data?.data?.asn ?? data?.data?.geo?.asnDetails ?? null;
       setASNDetails(asnObj);
-      setAbuseDetails(data?.data?.abuse ?? null);
+      setAbuseDetails(data?.data?.abuse ?? null as AbuseIpData | null);
     } catch (error) {
       console.error("Failed to fetch ASN details:", error);
     } finally {
@@ -174,8 +175,8 @@ export default function ThreatModal({ threat, onClose }: ThreatModalProps) {
 
             {abuseDetails && (
               <div className="mt-2 p-2 bg-gray-900/60 rounded border border-gray-800 space-y-1">
-                <InfoRow label="Abuse Confidence" value={abuseDetails.data?.abuseConfidenceScore ?? abuseDetails.abuseConfidenceScore ?? null} />
-                <InfoRow label="Last Reported" value={abuseDetails.data?.lastReportedAt ?? abuseDetails.lastReportedAt ?? null} />
+                <InfoRow label="Abuse Confidence" value={abuseDetails.data?.abuseConfidenceScore ?? null} />
+                <InfoRow label="Last Reported" value={abuseDetails.data?.lastReportedAt ?? null} />
               </div>
             )}
           </CardContent>
