@@ -147,6 +147,18 @@ export interface AbuseIPDBBlacklist {
   data: BlacklistItem[];
 }
 
+export interface AbuseIpData {
+  data?: {
+    ipAddress?: string;
+    countryCode?: string;
+    abuseConfidenceScore?: number;
+    lastReportedAt?: string;
+    totalReports?: number;
+    [k: string]: unknown;
+  };
+  [k: string]: unknown;
+}
+
 // ============================================
 // Enrichment Helper Types
 // ============================================
