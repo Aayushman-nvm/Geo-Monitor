@@ -39,7 +39,7 @@ export function useThreats() {
     // Initial fetch
     fetchThreats();
 
-    interval = setInterval(fetchThreats, 60000);
+    interval = setInterval(fetchThreats, 3600000); // should be 60000 but the data isnt changing that frequently so... ive set it to 1 hour (subject to change later)
 
     return () => clearInterval(interval);
   }, [setData, setLoading, setError]);
