@@ -10,6 +10,8 @@ import ThreatModal from '@/components/threat/ThreatModal';
 import ThreatListModal from '@/components/threat/ThreatListModal';
 import FlowDetailsModal from '@/components/threat/FlowDetailsModal';
 import GeoJSON from '@/data/custom.geo.json';
+import type { GeoJSONFeature, ArcData, ThreatPoint } from "@/types/types"
+import type { GlobeMethods } from 'react-globe.gl';
 
 interface Globe3DProps {
   filteredThreats?: RedisThreat[];
@@ -29,7 +31,8 @@ export default function Globe3D({
   filteredThreats,
   selectedLevel = 'all' 
 }: Globe3DProps) {
-  const globeRef = useRef<any>(null);
+  // Use GlobeMethods from react-globe.gl for the ref so prop typing matches
+  const globeRef = useRef<GlobeMethods | undefined>(undefined);
   const { threats, hotspots, attackFlow } = useThreatStore();
   
   // Use filtered threats if provided, otherwise use all threats from store
@@ -41,7 +44,18 @@ export default function Globe3D({
   const [selectedFlow, setSelectedFlow] = useState<AttackFlow | null>(null);
   
   const countries = GeoJSON;
-  const flows = attackFlow || [];
+  type FlowEntry = {
+    id: string;
+    originCountry: string;
+    originCountryCode: string;
+    targetCountry: string;
+    targetCountryCode: string;
+    magnitude: number;
+    originCoords: { lat: number; lon: number } | null;
+    targetCoords: { lat: number; lon: number } | null;
+  };
+
+  const flows: FlowEntry[] = (attackFlow as FlowEntry[]) || [];
 
   // Measure container to pass explicit size to the Globe so it always centers and fits.
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -63,17 +77,28 @@ export default function Globe3D({
 
   // Auto-rotate globe
   useEffect(() => {
-    if (globeRef.current && globeRef.current.controls) {
-      try {
-        const controls = globeRef.current.controls();
+    const controlsFn = globeRef.current?.controls;
+    if (!controlsFn) return;
+    try {
+      // Strongly type the returned controls with the subset we use
+      type Controls = {
+        autoRotate?: boolean;
+        autoRotateSpeed?: number;
+        enableZoom?: boolean;
+        minDistance?: number;
+        maxDistance?: number;
+      };
+
+      const controls = controlsFn() as Controls | undefined;
+      if (controls) {
         controls.autoRotate = true;
         controls.autoRotateSpeed = 0.3;
         controls.enableZoom = true;
         controls.minDistance = 120;
         controls.maxDistance = 800;
-      } catch (err) {
-        // fallback: ignore
       }
+    } catch (err) {
+      // fallback: ignore
     }
   }, []);
 
@@ -95,7 +120,7 @@ export default function Globe3D({
     const altitude = smallestSide < 420 ? 2.8 : smallestSide < 600 ? 2.4 : 2.0;
 
     try {
-      globeRef.current.pointOfView({ lat: lat || 0, lng: lng || 0, altitude }, 1000);
+      globeRef.current?.pointOfView?.({ lat: lat || 0, lng: lng || 0, altitude }, 1000);
     } catch (err) {
       // ignore if globe not ready yet
     }
@@ -137,14 +162,19 @@ export default function Globe3D({
   };
 
   // Click handlers
-  const handleThreatClick = useCallback((threat: RedisThreat) => {
+  // match react-globe.gl handler signature: (obj, event, coords)
+  const handleThreatClick = useCallback((obj: object, _ev?: MouseEvent, _coords?: { lat: number; lng: number; altitude: number }) => {
+    const pt = obj as ThreatPoint;
+    const threat = pt?.threat as RedisThreat | undefined;
+    if (!threat) return;
     setSelectedThreat(threat);
     setSelectedCountry(null);
     setSelectedFlow(null);
   }, []);
 
-  const handleCountryClick = useCallback((polygon: any) => {
-    const countryCode = polygon.properties?.iso_a2;
+  const handleCountryClick = useCallback((polygon: object, _ev?: MouseEvent, _coords?: { lat: number; lng: number; altitude: number }) => {
+    const poly = polygon as GeoJSONFeature;
+    const countryCode = poly?.properties?.iso_a2;
     if (countryCode) {
       setSelectedCountry(countryCode);
       setSelectedThreat(null);
@@ -152,28 +182,38 @@ export default function Globe3D({
     }
   }, []);
 
-  const handleFlowClick = useCallback((flow: AttackFlow) => {
+  const handleFlowClick = useCallback((obj: object, _ev?: MouseEvent, _coords?: { lat: number; lng: number; altitude: number }) => {
+    const arc = obj as ArcData;
+    const flow = arc?.flow as AttackFlow | undefined;
+    if (!flow) return;
     setSelectedFlow(flow);
     setSelectedThreat(null);
     setSelectedCountry(null);
   }, []);
 
-  // Data preparation
-  const threatPoints = displayThreats.map(threat => ({
-    lat: threat.lat,
-    lng: threat.lon,
-    size: getThreatSize(threat),
-    color: getThreatColor(threat),
-    threat,
-  }));
+  // Open threat modal when selecting a threat from the list (different signature than globe clicks)
+  const openThreatFromList = useCallback((threat: RedisThreat) => {
+    setSelectedThreat(threat);
+    setSelectedCountry(null);
+    setSelectedFlow(null);
+  }, []);
 
-  const arcData = flows.map(flow => ({
-    startLat: flow.originCoords?.lat,
-    startLng: flow.originCoords?.lon,
-    endLat: flow.targetCoords?.lat,
-    endLng: flow.targetCoords?.lon,
-    color: getFlowColor(flow),
-    flow,
+  // Data preparation
+  const threatPoints: ThreatPoint[] = displayThreats.map((threat: RedisThreat) => ({
+     lat: threat.lat,
+     lng: threat.lon,
+     size: getThreatSize(threat),
+     color: getThreatColor(threat),
+     threat,
+   }));
+
+  const arcData: ArcData[] = flows.map(flow => ({
+    startLat: flow.originCoords?.lat ?? 0,
+    startLng: flow.originCoords?.lon ?? 0,
+    endLat: flow.targetCoords?.lat ?? 0,
+    endLng: flow.targetCoords?.lon ?? 0,
+    color: getFlowColor(flow as unknown as AttackFlow),
+    flow: flow as unknown as AttackFlow,
   }));
 
   const countryThreats = selectedCountry
@@ -194,14 +234,14 @@ export default function Globe3D({
         
         // Countries
         polygonsData={countries?.features || []}
-        polygonCapColor={d => getCountryColor((d as any).properties?.iso_a2)}
+        polygonCapColor={d => getCountryColor((d as GeoJSONFeature).properties?.iso_a2)}
         polygonSideColor={() => 'rgba(0, 0, 0, 0.05)'}
         polygonStrokeColor={() => 'rgba(100, 100, 100, 0.15)'}
         polygonAltitude={0.006}
         polygonsTransitionDuration={300}
         onPolygonClick={handleCountryClick}
         polygonLabel={(d) => {
-          const props = (d as any).properties;
+          const props = (d as GeoJSONFeature).properties;
           const countryCode = props?.iso_a2;
           const hotspot = hotspots?.find(h => h.countryCode === countryCode);
           
@@ -226,10 +266,12 @@ export default function Globe3D({
         pointAltitude={0.02}
         pointRadius="size"
         pointsMerge={false}
-        onPointClick={(point: any) => handleThreatClick(point.threat)}
-        pointLabel={(point: any) => {
-          const threat = point.threat;
-          return `
+        onPointClick={(point: object, ev?: MouseEvent, coords?: { lat: number; lng: number; altitude: number }) => handleThreatClick(point, ev, coords)}
+        pointLabel={(point: unknown) => {
+           const p = point as ThreatPoint;
+           const threat = p?.threat as RedisThreat | undefined;
+           if (!threat) return '';
+           return `
             <div style="background: rgba(0,0,0,0.95); padding: 10px 12px; border-radius: 6px; color: white; max-width: 260px; font-size: 11px; line-height: 1.5;">
               <strong style="color: ${getThreatColor(threat)}; font-size: 12px; display: block; margin-bottom: 6px;">
                 Threat Score: ${threat.threatScore}/100
@@ -258,10 +300,12 @@ export default function Globe3D({
         arcDashGap={0.3}
         arcDashAnimateTime={1500}
         arcsTransitionDuration={1000}
-        onArcClick={(arc: any) => handleFlowClick(arc.flow)}
-        arcLabel={(arc: any) => {
-          const flow = arc.flow;
-          return `
+        onArcClick={(arc: object, ev?: MouseEvent, coords?: { lat: number; lng: number; altitude: number }) => handleFlowClick(arc, ev, coords)}
+        arcLabel={(arc: unknown) => {
+           const a = arc as ArcData;
+           const flow = a?.flow as AttackFlow | undefined;
+           if (!flow) return '';
+            return `
             <div style="background: rgba(0,0,0,0.95); padding: 10px 12px; border-radius: 6px; color: white; font-size: 11px; line-height: 1.5;">
               <strong style="font-size: 12px; display: block; margin-bottom: 6px;">Attack Flow</strong>
               <div>
@@ -294,7 +338,7 @@ export default function Globe3D({
       <ThreatListModal
         countryCode={selectedCountry}
         threats={countryThreats}
-        onThreatClick={handleThreatClick}
+        onThreatClick={openThreatFromList}
         onClose={() => setSelectedCountry(null)}
       />
 
