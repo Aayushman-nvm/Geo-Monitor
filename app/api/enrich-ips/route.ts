@@ -6,7 +6,12 @@ import { geolocateBatch, GeoEntry } from "@/services/geolocateIP";
 import { getIpAsn, CloudflareAsnInfo } from '@/services/cloudflare';
 import { redis } from "@/lib/redis";
 import type { BlacklistItem } from "@/types/redis";
-import type { CloudflareBGPEvent, AbuseIPDBBlacklist } from "@/types/types"
+import type { CloudflareBGPEvent, AbuseIPDBBlacklist, AbuseIpData } from "@/types/types"
+
+interface EnrichRequest {
+  bgpHijacks?: { result?: { events?: CloudflareBGPEvent[] } } | null;
+  includeBlacklist?: boolean;
+}
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -21,7 +26,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const body = await request.json();
+    const body = (await request.json()) as EnrichRequest;
     const { bgpHijacks, includeBlacklist = true } = body;
 
     // ============================================
