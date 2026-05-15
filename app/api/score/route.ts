@@ -6,7 +6,7 @@ import type { RedisThreat, BlacklistItem } from "@/types/redis";
 import type { CloudflareTopOrigin, HijackIPEntry, CloudflareTopAttack } from "@/types/types"
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 30;
+export const maxDuration = 300;
 
 export async function POST(request: Request) {
   try {
