@@ -38,7 +38,7 @@ export default function HeroSection({ scrollProgress }: HeroSectionProps) {
               textShadow: '0 0 20px rgba(0,0,0,0.5)',
             }}
           >
-            PLACEHOLDER
+            Geo Monitor
           </h1>
         </div>
 
