@@ -123,7 +123,7 @@ export async function POST(request: Request) {
         // Cache for 23 hours (82800 seconds) - leaves 1 hour buffer before next day
         // This ensures only 1 API call per day instead of 5
         await redis.set("abuseipdb:blacklist", JSON.stringify(blacklist), {
-          ex: 82800,
+          ex: 86400,
         });
 
         console.log(
