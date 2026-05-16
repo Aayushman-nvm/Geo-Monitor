@@ -16,14 +16,14 @@ export default function Navbar() {
               <span className="text-white font-bold text-sm">P</span>
             </div>
             <span className="hidden sm:block text-white font-semibold text-sm tracking-tight">
-              PLACEHOLDER
+              Geo Monitor
             </span>
           </Link>
 
           {/* Social Links */}
           <div className="flex items-center gap-2">
             <a
-              href="https://github.com/yourusername/yourrepo"
+              href="https://github.com/Aayushman-nvm/Geo-Monitor"
               target="_blank"
               rel="noopener noreferrer"
               className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition"
@@ -32,7 +32,7 @@ export default function Navbar() {
               <SiGithub className="w-4 h-4" />
             </a>
             <a
-              href="https://twitter.com/yourusername"
+              href="https://x.com/White_nvm"
               target="_blank"
               rel="noopener noreferrer"
               className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition"
