@@ -3,27 +3,41 @@ import { redis } from "@/lib/redis";
 
 const HASH_KEY = "threat:summaries";
 
+// Safe parse helper for cached values which may be objects, strings, or double-stringified
+const safeParse = <T,>(cached: unknown): T | null => {
+  if (cached == null) return null;
+  if (typeof cached === 'object') return cached as T;
+  if (typeof cached === 'string') {
+    try {
+      return JSON.parse(cached) as T;
+    } catch (err) {
+      // Not JSON: return the raw string
+      return cached as unknown as T;
+    }
+  }
+  return null;
+}
+
 export async function POST(req: Request) {
   try {
-    const { threat } = await req.json();
+    const body = await req.json();
+    const threat = body?.threat;
+    const ip = body?.ip || threat?.ip;
 
-    if (!threat?.ip) {
-      return Response.json(
-        { error: "Invalid threat payload" },
-        { status: 400 },
-      );
+    if (!ip) {
+      return Response.json({ error: "Missing ip" }, { status: 400 });
     }
-
-    const ip = threat.ip;
 
     // Fetch one field from hash
     const cached = await redis.hget(HASH_KEY, ip);
 
     if (cached) {
-      return Response.json({
-        summary: typeof cached === "string" ? JSON.parse(cached) : cached,
-        cached: true,
-      });
+      const parsed = safeParse<unknown>(cached);
+      return Response.json({ summary: parsed ?? cached, cached: true });
+    }
+
+    if (!threat) {
+      return Response.json({ error: 'Threat payload required to generate summary' }, { status: 400 });
     }
 
     const summary = await getThreatSummary(JSON.stringify(threat));
