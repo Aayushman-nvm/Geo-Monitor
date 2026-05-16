@@ -55,7 +55,7 @@ export async function GET(request: Request) {
         const data = await getTraffic();
         trafficData = data || null;
         try {
-          await redis.set("cloudflare:traffic:raw", JSON.stringify(data), { ex: 900 });
+          await redis.set("cloudflare:traffic:raw", JSON.stringify(data), { ex: 86400 });
         } catch (err) {
           console.error('[FETCH-TRAFFIC] Failed to cache traffic:', err);
         }
@@ -72,7 +72,7 @@ export async function GET(request: Request) {
         const data = await getAnomalies();
         hijacksData = (data && data.bgpHijacks) || null;
         try {
-          await redis.set("cloudflare:hijacks:raw", JSON.stringify((data && data.bgpHijacks) || null), { ex: 900 });
+          await redis.set("cloudflare:hijacks:raw", JSON.stringify((data && data.bgpHijacks) || null), { ex: 86400 });
         } catch (err) {
           console.error('[FETCH-TRAFFIC] Failed to cache hijacks:', err);
         }
@@ -89,7 +89,7 @@ export async function GET(request: Request) {
         const data = await getAnomalies();
         outagesData = (data && data.outages) || null;
         try {
-          await redis.set("cloudflare:outages:raw", JSON.stringify((data && data.outages) || null), { ex: 3600 });
+          await redis.set("cloudflare:outages:raw", JSON.stringify((data && data.outages) || null), { ex: 86400 });
         } catch (err) {
           console.error('[FETCH-TRAFFIC] Failed to cache outages:', err);
         }
