@@ -21,10 +21,10 @@ export async function POST(request: Request) {
 
     // Store all data in Redis with 24 hour expiry
     await Promise.all([
-      redis.set("threats:latest", JSON.stringify(threats), { ex: 900 }),
-      redis.set("hotspots:latest", JSON.stringify(hotspots), { ex: 900 }),
-      redis.set("stats:summary", JSON.stringify(stats), { ex: 900 }),
-      redis.set("flows:latest", JSON.stringify(attackFlows), { ex: 900 }),
+      redis.set("threats:latest", JSON.stringify(threats), { ex: 86400 }),
+      redis.set("hotspots:latest", JSON.stringify(hotspots), { ex: 86400 }),
+      redis.set("stats:summary", JSON.stringify(stats), { ex: 86400 }),
+      redis.set("flows:latest", JSON.stringify(attackFlows), { ex: 86400 }),
     ]);
 
     console.log("[CACHE] All data stored successfully");
