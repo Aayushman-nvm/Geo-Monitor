@@ -22,22 +22,21 @@ export default function ThreatModal({ threat, onClose }: ThreatModalProps) {
   const [loadingSummary, setLoadingSummary] = useState(false);
   const [aiSummary, setAISummary] = useState<string | null>(null);
 
-  if (!threat) return null;
-
-  // Fetch ASN details on-demand
-  const fetchIPDetails = async () => {
+  // Fetch ASN details (accepts ip so it is safe to call for different threats)
+  const fetchIPDetails = async (ip: string) => {
+    if (!ip) return;
     setLoadingASN(true);
     try {
       const res = await fetch("/api/ips-info", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ip: threat?.ip }),
+        body: JSON.stringify({ ip }),
       });
       const data = await res.json();
-      // api returns { success, data: { ip, geo, asn }, ... }
+      // api returns { success, data: { ip, geo, asn, abuse }, ... }
       const asnObj = data?.data?.asn ?? data?.data?.geo?.asnDetails ?? null;
-      setASNDetails(asnObj);
-      setAbuseDetails(data?.data?.abuse ?? null as AbuseIpData | null);
+      setASNDetails(asnObj ?? null);
+      setAbuseDetails((data?.data?.abuse ?? null) as AbuseIpData | null);
     } catch (error) {
       console.error("Failed to fetch ASN details:", error);
     } finally {
@@ -45,17 +44,44 @@ export default function ThreatModal({ threat, onClose }: ThreatModalProps) {
     }
   };
 
+  // Reset modal state whenever the threat changes (close or open). Auto-fetch IP details on open.
+  useEffect(() => {
+    // Clear previous modal state
+    setASNDetails(null);
+    setAbuseDetails(null);
+    setAISummary(null);
+    setLoadingASN(false);
+    setLoadingSummary(false);
+
+    // NOTE: Do NOT auto-fetch details here. Only clear state on threat change.
+    // IP detail fetching must be explicitly triggered by the user via the button
+    // to avoid unnecessary API calls and to ensure UX/consent.
+    // no cleanup required
+  }, [threat]);
+
+  // Ensure modal internal state is reset when closing, then call parent onClose
+  const handleClose = () => {
+    setASNDetails(null);
+    setAbuseDetails(null);
+    setAISummary(null);
+    setLoadingASN(false);
+    setLoadingSummary(false);
+    onClose();
+  };
+
   // Generate AI summary on-demand
   const generateSummary = async () => {
     setLoadingSummary(true);
+    setAISummary(null);
     try {
       const res = await fetch("/api/summary", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ threat }),
+        body: JSON.stringify({ ip: threat?.ip, threat }),
       });
       const data = await res.json();
-      setAISummary(data.summary);
+      const summaryText = typeof data.summary === 'string' ? data.summary : JSON.stringify(data.summary);
+      setAISummary(summaryText);
     } catch (error) {
       console.error("Failed to generate summary:", error);
     } finally {
@@ -64,7 +90,8 @@ export default function ThreatModal({ threat, onClose }: ThreatModalProps) {
   };
 
   const getSeverityColor = () => {
-    const score = threat.threatScore;
+    const score = threat?.threatScore;
+    if (!score) return "text-green-400";
     if (score >= 85) return "text-red-400";
     if (score >= 70) return "text-orange-400";
     if (score >= 50) return "text-yellow-400";
@@ -72,17 +99,20 @@ export default function ThreatModal({ threat, onClose }: ThreatModalProps) {
   };
 
   const getSeverityLabel = () => {
-    const score = threat.threatScore;
+    const score = threat?.threatScore;
+    if (!score) return "LOW";
     if (score >= 85) return "CRITICAL";
     if (score >= 70) return "HIGH";
     if (score >= 50) return "MEDIUM";
     return "LOW";
   };
 
+  if (!threat) return null;
+
   return (
     <Popup
       isOpen={!!threat}
-      onClose={onClose}
+      onClose={handleClose}
       title={`Threat: ${threat.ip}`}
       size="lg"
     >
@@ -137,7 +167,7 @@ export default function ThreatModal({ threat, onClose }: ThreatModalProps) {
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={fetchIPDetails}
+                onClick={() => fetchIPDetails(threat.ip)}
                 className="w-full mt-2"
               >
                 Load detailed IP information
