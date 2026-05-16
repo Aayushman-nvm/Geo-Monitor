@@ -157,11 +157,28 @@ export async function POST(request: Request) {
     const uncachedIPs: string[] = [];
     const geoHashKey = "geo:ips";
 
+    // Safe parse helper for cached values which may be objects, strings, or double-stringified
+    const safeParse = <T,>(cached: unknown): T | null => {
+      if (cached == null) return null;
+      if (typeof cached === 'object') return cached as T;
+      if (typeof cached === 'string') {
+        try {
+          return JSON.parse(cached) as T;
+        } catch (err) {
+          // Not JSON: return the raw string/object as best-effort
+          return cached as unknown as T;
+        }
+      }
+      return null;
+    };
+
     // Check which IPs we already have cached in the single HASH
     const geoCheckPromises = uniqueIPs.map(async (ip) => {
       const cached = await redis.hget(geoHashKey, ip);
       if (cached) {
-        geoData.push(JSON.parse(cached as string));
+        const parsed = safeParse<GeoEntry>(cached);
+        if (parsed) geoData.push(parsed);
+        else uncachedIPs.push(ip);
       } else {
         uncachedIPs.push(ip);
       }
@@ -220,20 +237,24 @@ export async function POST(request: Request) {
       try {
         const cached = await redis.hget(asnHashKey, geo.ip);
         if (cached) {
-          const asnInfo = JSON.parse(cached as string) as CloudflareAsnInfo;
-          const asnNum = asnInfo.asn;
-          const orgName = (asnInfo.orgName || asnInfo.name || "") as string;
-          geo.as = `AS${asnNum} ${orgName}`.trim();
-          geo.asnDetails = asnInfo;
-          // Update geo cache (hash) with merged ASN info
-          try {
-            await redis.hset(geoHashKey, { [geo.ip]: JSON.stringify(geo) });
-            await redis.expire(geoHashKey, 604800);
-          } catch (err) {
-            console.error(
-              "[ENRICH-IPS] Failed to update geo hash with ASN info",
-              err,
-            );
+          const asnInfo = safeParse<CloudflareAsnInfo>(cached);
+          if (asnInfo) {
+            const asnNum = asnInfo.asn;
+            const orgName = (asnInfo.orgName || asnInfo.name || "") as string;
+            geo.as = `AS${asnNum} ${orgName}`.trim();
+            geo.asnDetails = asnInfo;
+            // Update geo cache (hash) with merged ASN info
+            try {
+              await redis.hset(geoHashKey, { [geo.ip]: JSON.stringify(geo) });
+              await redis.expire(geoHashKey, 604800);
+            } catch (err) {
+              console.error(
+                "[ENRICH-IPS] Failed to update geo hash with ASN info",
+                err,
+              );
+            }
+          } else {
+            lookupIPs.push(geo.ip);
           }
         } else {
           lookupIPs.push(geo.ip);
