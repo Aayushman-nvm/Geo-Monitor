@@ -3,10 +3,14 @@
 import { NextResponse } from "next/server";
 import { getBlacklist } from "@/services/abuseipdb";
 import { geolocateBatch, GeoEntry } from "@/services/geolocateIP";
-import { getIpAsn, CloudflareAsnInfo } from '@/services/cloudflare';
+import { getIpAsn, CloudflareAsnInfo } from "@/services/cloudflare";
 import { redis } from "@/lib/redis";
 import type { BlacklistItem } from "@/types/redis";
-import type { CloudflareBGPEvent, AbuseIPDBBlacklist, AbuseIpData } from "@/types/types"
+import type {
+  CloudflareBGPEvent,
+  AbuseIPDBBlacklist,
+  AbuseIpData,
+} from "@/types/types";
 
 interface EnrichRequest {
   bgpHijacks?: { result?: { events?: CloudflareBGPEvent[] } } | null;
@@ -62,20 +66,56 @@ export async function POST(request: Request) {
       if (hijackIPs.length >= 20) break;
     }
 
-    console.log(`[ENRICH-IPS] Extracted ${hijackIPs.length} IPs from BGP hijacks`);
+    console.log(
+      `[ENRICH-IPS] Extracted ${hijackIPs.length} IPs from BGP hijacks`,
+    );
 
     // ============================================
     // HYBRID: Check Redis for Blacklist First
     // AbuseIPDB updates once per day, has 5 calls/day limit
     // ============================================
-    let blacklist: AbuseIPDBBlacklist = { meta: { generatedAt: '' }, data: [] }
+    let blacklist: AbuseIPDBBlacklist = { meta: { generatedAt: "" }, data: [] };
 
     if (includeBlacklist) {
       const cachedBlacklist = await redis.get("abuseipdb:blacklist");
 
       if (cachedBlacklist) {
         console.log("[ENRICH-IPS] Using cached AbuseIPDB blacklist");
-        blacklist = JSON.parse(cachedBlacklist as string);
+        try {
+          // cachedBlacklist may be a string, an object, or double-stringified JSON.
+          if (typeof cachedBlacklist === "object" && cachedBlacklist !== null) {
+            // already parsed by client
+            blacklist = cachedBlacklist as unknown as AbuseIPDBBlacklist;
+          } else if (typeof cachedBlacklist === "string") {
+            try {
+              blacklist = JSON.parse(cachedBlacklist) as AbuseIPDBBlacklist;
+            } catch (err) {
+              // Try double-JSON ("\"{...}\"")
+              try {
+                const inner = JSON.parse(cachedBlacklist);
+                if (typeof inner === "string") {
+                  blacklist = JSON.parse(inner) as AbuseIPDBBlacklist;
+                } else {
+                  blacklist = inner as AbuseIPDBBlacklist;
+                }
+              } catch (err2) {
+                console.warn(
+                  "[ENRICH-IPS] Failed to parse cached blacklist, falling back to empty",
+                  err2,
+                );
+                blacklist = { meta: { generatedAt: "" }, data: [] };
+              }
+            }
+          } else {
+            blacklist = { meta: { generatedAt: "" }, data: [] };
+          }
+        } catch (err) {
+          console.warn(
+            "[ENRICH-IPS] Unexpected cache format for blacklist, continuing",
+            err,
+          );
+          blacklist = { meta: { generatedAt: "" }, data: [] };
+        }
       } else {
         console.log("[ENRICH-IPS] Fetching fresh AbuseIPDB blacklist...");
         blacklist = await getBlacklist({ min: 75, limit: 500 });
@@ -86,7 +126,9 @@ export async function POST(request: Request) {
           ex: 82800,
         });
 
-        console.log(`[ENRICH-IPS] Got ${blacklist.data.length} blacklisted IPs (fresh)`);
+        console.log(
+          `[ENRICH-IPS] Got ${blacklist.data.length} blacklisted IPs (fresh)`,
+        );
       }
     }
 
@@ -101,7 +143,9 @@ export async function POST(request: Request) {
     // Deduplicate
     const uniqueIPs = Array.from(new Set(allIPs));
 
-    console.log(`[ENRICH-IPS] Total unique IPs to process: ${uniqueIPs.length}`);
+    console.log(
+      `[ENRICH-IPS] Total unique IPs to process: ${uniqueIPs.length}`,
+    );
 
     // ============================================
     // HYBRID: Check Redis for Cached Geolocation
@@ -111,7 +155,7 @@ export async function POST(request: Request) {
 
     const geoData: GeoEntry[] = [];
     const uncachedIPs: string[] = [];
-    const geoHashKey = 'geo:ips';
+    const geoHashKey = "geo:ips";
 
     // Check which IPs we already have cached in the single HASH
     const geoCheckPromises = uniqueIPs.map(async (ip) => {
@@ -125,7 +169,9 @@ export async function POST(request: Request) {
 
     await Promise.all(geoCheckPromises);
 
-    console.log(`[ENRICH-IPS] Found ${geoData.length} cached geolocations, fetching ${uncachedIPs.length} fresh`);
+    console.log(
+      `[ENRICH-IPS] Found ${geoData.length} cached geolocations, fetching ${uncachedIPs.length} fresh`,
+    );
 
     // Fetch only uncached IPs
     if (uncachedIPs.length > 0) {
@@ -147,7 +193,10 @@ export async function POST(request: Request) {
           }
         }
       } catch (err) {
-        console.error('[ENRICH-IPS] Failed to cache fresh geo data in hash', err);
+        console.error(
+          "[ENRICH-IPS] Failed to cache fresh geo data in hash",
+          err,
+        );
       }
 
       geoData.push(...freshGeoData);
@@ -157,9 +206,9 @@ export async function POST(request: Request) {
     // ASN enrichment (use a single Redis HASH to avoid many top-level keys)
     // Key: 'asn:ips'  Field: ip -> JSON string of ASN result
     // ============================================
-    const asnHashKey = 'asn:ips';
+    const asnHashKey = "asn:ips";
     const lookupIPs: string[] = [];
-    const geoByIp = new Map<string, GeoEntry>;
+    const geoByIp = new Map<string, GeoEntry>();
 
     for (const g of geoData) geoByIp.set(g.ip, g);
 
@@ -173,7 +222,7 @@ export async function POST(request: Request) {
         if (cached) {
           const asnInfo = JSON.parse(cached as string) as CloudflareAsnInfo;
           const asnNum = asnInfo.asn;
-          const orgName = (asnInfo.orgName || asnInfo.name || '') as string;
+          const orgName = (asnInfo.orgName || asnInfo.name || "") as string;
           geo.as = `AS${asnNum} ${orgName}`.trim();
           geo.asnDetails = asnInfo;
           // Update geo cache (hash) with merged ASN info
@@ -181,7 +230,10 @@ export async function POST(request: Request) {
             await redis.hset(geoHashKey, { [geo.ip]: JSON.stringify(geo) });
             await redis.expire(geoHashKey, 604800);
           } catch (err) {
-            console.error('[ENRICH-IPS] Failed to update geo hash with ASN info', err);
+            console.error(
+              "[ENRICH-IPS] Failed to update geo hash with ASN info",
+              err,
+            );
           }
         } else {
           lookupIPs.push(geo.ip);
@@ -206,19 +258,22 @@ export async function POST(request: Request) {
           const geo = geoByIp.get(ip);
           if (geo) {
             const asnNum = asnInfo.asn;
-            const orgName = (asnInfo.orgName || asnInfo.name || '') as string;
+            const orgName = (asnInfo.orgName || asnInfo.name || "") as string;
             geo.as = `AS${asnNum} ${orgName}`.trim();
             geo.asnDetails = asnInfo as CloudflareAsnInfo;
             try {
               await redis.hset(geoHashKey, { [ip]: JSON.stringify(geo) });
               await redis.expire(geoHashKey, 604800);
             } catch (err) {
-              console.error('[ENRICH-IPS] Failed to update geo hash after ASN lookup', err);
+              console.error(
+                "[ENRICH-IPS] Failed to update geo hash after ASN lookup",
+                err,
+              );
             }
           }
         }
       } catch (err) {
-        console.error('[ENRICH-IPS] ASN lookup failed for', ip, err);
+        console.error("[ENRICH-IPS] ASN lookup failed for", ip, err);
       }
     }
 
