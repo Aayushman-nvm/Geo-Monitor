@@ -21,7 +21,7 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const baseUrl = "http://localhost:3000";
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
     const cronSecret = process.env.CRON_SECRET;
     const headers = {
       "Content-Type": "application/json",
