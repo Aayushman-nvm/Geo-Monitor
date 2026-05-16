@@ -36,14 +36,8 @@ export async function GET(request: Request) {
         try {
           return JSON.parse(cached) as T;
         } catch (err) {
-          try {
-            const inner = JSON.parse(cached);
-            if (typeof inner === 'string') return JSON.parse(inner) as T;
-            return inner as T;
-          } catch (err2) {
-            console.warn('[FETCH-TRAFFIC] Failed to parse cached value', err2);
-            return null;
-          }
+          // Not JSON: return the raw string
+          return cached as unknown as T;
         }
       }
       return null;
