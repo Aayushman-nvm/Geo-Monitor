@@ -48,7 +48,21 @@ export async function POST(req: Request) {
     }
 
     const geoCacheKey = `geo:ip:${ip}`;
-    const asnHashKey = "asn:ips";
+    
+    // Safe parse helper for cached values which may be objects, strings, or double-stringified
+    const safeParse = <T,>(cached: unknown): T | null => {
+      if (cached == null) return null;
+      if (typeof cached === 'object') return cached as T;
+      if (typeof cached === 'string') {
+        try {
+          return JSON.parse(cached) as T;
+        } catch (err) {
+          // Not JSON: return the raw string
+          return cached as unknown as T;
+        }
+      }
+      return null;
+    };
 
     // Try cache for geo
     let geo: GeoEntry | null = null;
@@ -56,8 +70,8 @@ export async function POST(req: Request) {
     try {
       const cached = await redis.get(geoCacheKey);
       if (cached) {
-        geo = JSON.parse(cached as string);
-        geoCached = true;
+        geo = safeParse<GeoEntry>(cached);
+        geoCached = !!geo;
       }
     } catch (err) {
       // ignore cache errors
@@ -118,15 +132,18 @@ export async function POST(req: Request) {
     };
 
     // Try to get ASN from redis hash
+    const asnHashKey = 'asn:ips';
     let asnInfo: NormalizedAsn | null = null;
     let asnCached = false;
 
     try {
       const cachedAsn = await redis.hget(asnHashKey, ip);
       if (cachedAsn) {
-        const parsed = JSON.parse(cachedAsn as string) as CloudflareAsnInfo;
-        asnInfo = normalizeAsn(parsed);
-        asnCached = true;
+        const parsed = safeParse<CloudflareAsnInfo>(cachedAsn);
+        if (parsed) {
+          asnInfo = normalizeAsn(parsed);
+          asnCached = true;
+        }
       }
     } catch (err) {
       console.error("[IPS-INFO] ASN hash read error", err);
@@ -181,11 +198,13 @@ export async function POST(req: Request) {
     try {
       const cachedAbuse = await redis.hget(abuseHashKey, ip);
       if (cachedAbuse) {
-        const parsed = JSON.parse(cachedAbuse as string) as AbuseCacheEntry;
-        const ageMs = Date.now() - new Date(parsed.fetchedAt).getTime();
-        const oneDay = 24 * 60 * 60 * 1000;
-        if (ageMs < oneDay && parsed.data) {
-          abuseData = parsed.data as AbuseIpData;
+        const parsed = safeParse<AbuseCacheEntry>(cachedAbuse);
+        if (parsed) {
+          const ageMs = Date.now() - new Date(parsed.fetchedAt).getTime();
+          const oneDay = 24 * 60 * 60 * 1000;
+          if (ageMs < oneDay && parsed.data) {
+            abuseData = parsed.data as AbuseIpData;
+          }
         }
       }
     } catch (err) {
