@@ -28,12 +28,33 @@ export async function GET(request: Request) {
     let hijacksData: CloudflareBGPHijacks | null = null;
     let outagesData: CloudflareOutages | null = null;
 
+    // Safe parse helper for cached values which may be objects, strings, or double-stringified
+    const safeParse = <T,>(cached: unknown): T | null => {
+      if (cached == null) return null;
+      if (typeof cached === 'object') return cached as T;
+      if (typeof cached === 'string') {
+        try {
+          return JSON.parse(cached) as T;
+        } catch (err) {
+          try {
+            const inner = JSON.parse(cached);
+            if (typeof inner === 'string') return JSON.parse(inner) as T;
+            return inner as T;
+          } catch (err2) {
+            console.warn('[FETCH-TRAFFIC] Failed to parse cached value', err2);
+            return null;
+          }
+        }
+      }
+      return null;
+    };
+
     const fetchTasks: Promise<void>[] = [];
 
     // Traffic (attacks/origins/targets) - 15 min
     if (cachedTraffic) {
       console.log("[FETCH-TRAFFIC] Using cached traffic data");
-      trafficData = JSON.parse(cachedTraffic as string);
+      trafficData = safeParse<CloudflareTrafficData>(cachedTraffic);
     } else {
       console.log("[FETCH-TRAFFIC] Fetching fresh traffic data...");
       fetchTasks.push((async () => {
@@ -50,7 +71,7 @@ export async function GET(request: Request) {
     // BGP hijacks - 15 min
     if (cachedHijacks) {
       console.log("[FETCH-TRAFFIC] Using cached BGP hijacks");
-      hijacksData = JSON.parse(cachedHijacks as string);
+      hijacksData = safeParse<CloudflareBGPHijacks>(cachedHijacks);
     } else {
       console.log("[FETCH-TRAFFIC] Fetching fresh BGP hijacks...");
       fetchTasks.push((async () => {
@@ -67,7 +88,7 @@ export async function GET(request: Request) {
     // Outages - 1 hour
     if (cachedOutages) {
       console.log("[FETCH-TRAFFIC] Using cached outages");
-      outagesData = JSON.parse(cachedOutages as string);
+      outagesData = safeParse<CloudflareOutages>(cachedOutages);
     } else {
       console.log("[FETCH-TRAFFIC] Fetching fresh outages...");
       fetchTasks.push((async () => {
