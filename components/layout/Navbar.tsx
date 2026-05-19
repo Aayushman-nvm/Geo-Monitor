@@ -3,6 +3,7 @@
 "use client";
 
 import { SiX, SiGithub } from '@icons-pack/react-simple-icons';
+import { EarthLock } from 'lucide-react';
 import Link from "next/link";
 
 export default function Navbar() {
@@ -13,7 +14,7 @@ export default function Navbar() {
           {/* Logo */}
           <Link href="/" className="flex items-center gap-2 group">
             <div className="w-8 h-8 rounded-lg bg-linear-to-br from-gray-700 to-gray-900 border border-gray-700 flex items-center justify-center group-hover:border-gray-600 transition">
-              <span className="text-white font-bold text-sm">P</span>
+              <span className="text-white font-bold text-sm"><EarthLock /></span>
             </div>
             <span className="hidden sm:block text-white font-semibold text-sm tracking-tight">
               Geo Monitor
