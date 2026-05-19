@@ -620,3 +620,8 @@ curl http://localhost:3000/api/threats
 - **react-globe.gl** for 3D globe visualization
 
 ---
+
+## API and Redis data
+
+- **API_template.md** stores the template data and its structure that these external API's provide
+- **Data_in_redis.md** stores the template data and its structure that I store in @upstash/redis
