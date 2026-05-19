@@ -1,6 +1,6 @@
 # Geo Monitor
 
-"Built a serverless pseudo real-time global cybersecurity threat visualization platform that maps network anomalies, BGP hijacks, and malicious IPs onto an interactive 3D globe *built entirely on free-tier services*.
+Built a serverless pseudo real-time global cybersecurity threat visualization platform that maps network anomalies, BGP hijacks, and malicious IPs onto an interactive 3D globe *built entirely on free-tier services*.
 
 ---
 
@@ -35,7 +35,9 @@ All data is processed through a **hybrid caching architecture** using Upstash Re
 
 ## Live Demo & Screenshots
 
-> **Note**: Add live deployment URL and screenshots here once deployed.
+[![Geo Monitor project banner](https://github.com/user-attachments/assets/0f16ae97-920b-4ccf-9abb-8b99780cc4ce)](https://geo-monitor-psi.vercel.app/)
+
+**Live link:** [Geo Monitor](https://geo-monitor-psi.vercel.app/)
 
 ---
 
