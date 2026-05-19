@@ -400,8 +400,8 @@ cyber-geo-monitor/
 │   │   └── Globe3D.tsx               # 3D globe visualization (react-globe.gl)
 │   │
 │   ├── layout/
-│   │   ├── Navbar.tsx                # Top navigation bar
-│   │   └── Footer.tsx                # Footer (if exists)
+│   │   └── Navbar.tsx                # Top navigation bar
+│   │   
 │   │
 │   ├── sections/
 │   │   ├── HeroSection.tsx           # Landing hero with scroll fade
