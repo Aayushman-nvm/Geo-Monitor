@@ -33,7 +33,7 @@ export default function HeroSection({ scrollProgress }: HeroSectionProps) {
         {/* Title - 95% visible, 5% behind globe */}
         <div className="relative z-0 flex items-center justify-center">
           <h1
-            className="text-[4.5rem] sm:text-[6rem] md:text-[8rem] lg:text-[10rem] xl:text-[12rem] font-bold text-transparent bg-clip-text bg-linear-to-b from-gray-200 via-gray-400 to-gray-600 select-none tracking-tighter leading-none text-center"
+            className="text-[4.5rem] sm:text-[6rem] md:text-[8rem] lg:text-[10rem] xl:text-[12rem] md:mt-20 font-bold text-transparent bg-clip-text bg-linear-to-b from-gray-200 via-gray-400 to-gray-600 select-none tracking-tighter leading-none text-center"
             style={{
               textShadow: '0 0 20px rgba(0,0,0,0.5)',
             }}
