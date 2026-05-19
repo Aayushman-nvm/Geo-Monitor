@@ -4,7 +4,7 @@
 
 ---
 
-## 📋 Table of Contents
+## Table of Contents
 
 - [Overview](#overview)
 - [Live Demo & Screenshots](#live-demo--screenshots)
@@ -13,14 +13,9 @@
 - [Architecture & Data Flow](#architecture--data-flow)
 - [Project Structure](#project-structure)
 - [API Rate Limit Strategy](#api-rate-limit-strategy)
-- [Installation & Setup](#installation--setup)
 - [Environment Variables](#environment-variables)
 - [Development Workflow](#development-workflow)
-- [Deployment](#deployment)
-- [Contributing](#contributing)
 - [Known Limitations](#known-limitations)
-- [Future Roadmap](#future-roadmap)
-- [License](#license)
 
 ---
 
@@ -119,31 +114,31 @@ Custom multi-signal algorithm combines:
 ### **High-Level System Design**
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
+┌──────────────────────────────────────────────────────────────────┐
 │                          USER INTERFACE                          │
-│  (Next.js App Router + React Globe GL + Zustand Store)          │
-└────────────────────────┬────────────────────────────────────────┘
+│  (Next.js App Router + React Globe GL + Zustand Store)           │
+└────────────────────────┬─────────────────────────────────────────┘
                          │
                          │ SWR Polling (1hr interval)
                          ▼
-┌─────────────────────────────────────────────────────────────────┐
+┌──────────────────────────────────────────────────────────────────┐
 │                      /api/threats (GET)                          │
 │  Returns cached data from Redis (threats, hotspots, stats, flows)│
-└────────────────────────┬────────────────────────────────────────┘
+└────────────────────────┬─────────────────────────────────────────┘
                          │
                          │ Reads from
                          ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                      UPSTASH REDIS CACHE                         │
-│  Keys: threats:latest, hotspots:latest, stats:summary,          │
+┌─────────────────────────────────────────────────────────────────────────────────────────┐
+│                      UPSTASH REDIS CACHE                                                │
+│  Keys: threats:latest, hotspots:latest, stats:summary,                                  │
 │        flows:latest, cloudflare:*, geo:ips (hash), asn:ips (hash), abuse:ips (hash)     │
-└────────────────────────┬────────────────────────────────────────┘
+└────────────────────────┬────────────────────────────────────────────────────────────────┘
                          │
                          │ Written by (every 24 hours - planned hourly)
                          ▼
-┌─────────────────────────────────────────────────────────────────┐
-│              /api/cron/refresh (CRON TRIGGER)                    │
-│  Orchestrates 7-step data pipeline every hour via vercel.json   │
+┌─────────────────────────────────────────────────────────────────────┐
+│              /api/cron/refresh (CRON TRIGGER)                       │
+│  Orchestrates 7-step data pipeline every hour via vercel.json       │
 └┬──────┬──────┬──────┬──────┬──────┬──────┬──────────────────────────┘
  │      │      │      │      │      │      │
  │      │      │      │      │      │      └─> Step 7: /api/cache (POST)
